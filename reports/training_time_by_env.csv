@@ -1,0 +1,13 @@
+env,agent,minutes
+simple_adversary_v3,maddpg,21.283106
+simple_adversary_v3,maac,64.355028
+simple_crypto_v3,maddpg,20.682981
+simple_crypto_v3,maac,62.029715
+simple_push_v3,maddpg,15.154666
+simple_push_v3,maac,41.203958
+simple_speaker_listener_v4,maddpg,14.859436
+simple_speaker_listener_v4,maac,41.446054
+simple_spread_v3,maddpg,23.565171
+simple_spread_v3,maac,71.450180
+simple_tag_v3,maddpg,32.546144
+simple_tag_v3,maac,85.428820

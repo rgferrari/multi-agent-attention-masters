@@ -1,0 +1,35 @@
+common:
+  env: simple_speaker_listener_v4
+  episodes: 60000
+  max_cycles: 25
+  seed: 0
+  render_mode: none
+  continuous_actions: false
+  use_gpu: false
+  log_dir: runs
+  save_dir: checkpoints
+  save_every: 0
+  save_final: true
+  early_stop_patience: 0
+  early_stop_min_delta: 0.01
+  early_stop_start_episode: 100
+  early_stop_window: 10
+  early_stop_metric: mean_reward
+  early_stop_mode: max
+  train: true
+  lr: 0.01
+
+maddpg:
+  buffer_size: 1000000
+  batch_size: 1024
+  tau: 0.01
+  gamma: 0.95
+  actor_lr: 0.01
+  expl_noise: 0.1
+  hidden_dim: 64
+  critic_lr: 0.01
+  start_steps: 10000
+  update_every: 100
+  updates_per_step: 1
+  discrete_temperature: 1.0
+  epsilon: 0.1

@@ -1,0 +1,4 @@
+/.venv
+/checkpoints
+/runs
+/__pycache__
