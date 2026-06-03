@@ -27,6 +27,7 @@ def train_maddpg(env, maddpg: MADDPG, args) -> None:
         os.makedirs(save_dir, exist_ok=True)
 
     global_step = 0
+    update_step = 0
     total_steps = args.episodes * args.max_cycles
     progress = tqdm(total=max(1, total_steps), desc="Training", dynamic_ncols=True)
 
@@ -52,7 +53,12 @@ def train_maddpg(env, maddpg: MADDPG, args) -> None:
             maddpg.store_transition(prev_obs, actions_onehot, rewards, obs, dones)
             if global_step >= args.start_steps and global_step % args.update_every == 0:
                 for _ in range(args.updates_per_step):
-                    maddpg.update()
+                    metrics = maddpg.update()
+                    if metrics:
+                        for i, agent_id in enumerate(agent_ids):
+                            writer.add_scalar(f"agent{i}/losses/critic_loss", metrics[f"critic_loss_{i}"], update_step)
+                            writer.add_scalar(f"agent{i}/losses/actor_loss", metrics[f"actor_loss_{i}"], update_step)
+                        update_step += 1
 
             done = all(terminations.values()) or all(truncations.values())
             prev_obs = obs
