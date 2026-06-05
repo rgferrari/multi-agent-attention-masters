@@ -55,33 +55,25 @@ def _render_frame(env) -> np.ndarray:
     return frame.copy()
 
 
-def _speaker_listener_annotation(env) -> str | None:
-    """Get the name of the color the speaker is sending to the listener.
-    Landmarks: 0=RED (A), 1=GREEN (B), 2=BLUE (C)
+_COLOR_HEX = {'RED': '#CC0000', 'GREEN': '#007700', 'BLUE': '#0000CC'}
+
+
+def _speaker_listener_annotation(env) -> tuple[str, str] | None:
+    """Return (label, hex_color) for the color the speaker is signalling.
+
+    Landmark colors: A=RED (idx 0), B=GREEN (idx 1), C=BLUE (idx 2).
+    The dominant RGB channel of the goal landmark's color gives the color name.
+    The speaker is the non-silent agent (silent=False) that has goal_b set.
     """
     world = env.unwrapped.world
-    speaker = None
     for agent in world.agents:
-        if hasattr(agent, 'listener') and getattr(agent, 'listener', False) is False:
-            speaker = agent
-            break
-    if speaker is None:
-        return None
-    goal = getattr(speaker, 'goal_b', None)
-    if goal is None:
-        return None
-    
-    goal_color = np.asarray(goal.color, dtype=float)
-    landmarks = world.landmarks
-    
-    # Map landmark index to color name
-    color_names = ['RED', 'GREEN', 'BLUE']
-    for i, landmark in enumerate(landmarks):
-        landmark_color = np.asarray(landmark.color, dtype=float)
-        if np.allclose(landmark_color, goal_color):
-            if i < len(color_names):
-                return f'sending {color_names[i]}'
-    
+        if not agent.silent:
+            goal = getattr(agent, 'goal_b', None)
+            if goal is None:
+                return None
+            color = np.asarray(goal.color, dtype=float)
+            name = ['RED', 'GREEN', 'BLUE'][int(np.argmax(color))]
+            return f'→ {name}', _COLOR_HEX[name]
     return None
 
 
@@ -105,7 +97,7 @@ def _load_maac(env_name: str) -> AttentionSAC:
 
 def _load_maddpg(env_name: str, env) -> MADDPG:
     ckpt = _checkpoint_path('maddpg', env_name)
-    state = torch.load(ckpt, map_location='cpu')
+    state = torch.load(ckpt, map_location='cpu', weights_only=False)
     agent_ids = list(env.agents)
     obs_spaces = [env.observation_space(a) for a in agent_ids]
     act_spaces = [env.action_space(a) for a in agent_ids]
@@ -151,87 +143,75 @@ def _capture_episode_frames(agent_name: str, env_name: str) -> Tuple[List[np.nda
     return ordered_frames, speaker_note
 
 
-def _label_row(ax, text: str) -> None:
-    ax.text(
-        0.5,
-        1.02,
-        text,
-        transform=ax.transAxes,
-        ha='center',
-        va='bottom',
-        fontsize=10,
-        fontweight='bold',
+def build_validation_grid() -> Path:
+    """Single grid: rows=environments, cols=steps×agents (MAAC|MADDPG per step)."""
+    # Pre-capture so each (agent, env) episode runs exactly once
+    all_frames: Dict[str, Dict[str, Tuple[List[np.ndarray], str | None]]] = {}
+    for agent_name in AGENTS:
+        all_frames[agent_name] = {}
+        for env_name in ENVS:
+            all_frames[agent_name][env_name] = _capture_episode_frames(agent_name, env_name)
+
+    n_envs = len(ENVS)
+    n_steps = len(CAPTURE_STEPS)
+
+    # GridSpec: n_steps cols per agent, with a narrow spacer between the two agent groups
+    SPACER = 0.12  # relative width of the gap column between model groups
+    width_ratios = [1] * n_steps + [SPACER] + [1] * n_steps
+    fig = plt.figure(figsize=(14, 5))
+    gs = fig.add_gridspec(
+        n_envs, n_steps * 2 + 1,
+        width_ratios=width_ratios,
+        left=0.10, right=0.99, top=0.94, bottom=0.01,
+        wspace=0.02, hspace=0.03,
     )
 
+    # col mapping: agent 0 → cols 0..n_steps-1, agent 1 → cols n_steps+1..2*n_steps
+    def grid_col(a_idx: int, c_step: int) -> int:
+        return a_idx * (n_steps + 1) + c_step
 
-def build_validation_grid() -> Path:
-    """Build separate validation grids for MADDPG and MAAC.
-    Each grid: rows=environments, columns=steps.
-    Environment names written vertically on the left.
-    """
-    out_paths = []
-    
-    for agent_name in AGENTS:
-        fig, axes = plt.subplots(len(ENVS), len(CAPTURE_STEPS), figsize=(12, 8))
-        if len(ENVS) == 1:
-            axes = np.array([axes])
-        if len(CAPTURE_STEPS) == 1:
-            axes = np.array([[axes]])
+    for r, env_name in enumerate(ENVS):
+        for a_idx, agent_name in enumerate(AGENTS):
+            for c_step in range(n_steps):
+                col = grid_col(a_idx, c_step)
+                ax = fig.add_subplot(gs[r, col])
+                frames, speaker_note = all_frames[agent_name][env_name]
 
-        fig.subplots_adjust(left=0.18, right=0.98, top=0.95, bottom=0.05, wspace=0.08, hspace=0.12)
-
-        for r, env_name in enumerate(ENVS):
-            for c, step in enumerate(CAPTURE_STEPS):
-                ax = axes[r, c]
-                frames, speaker_note = _capture_episode_frames(agent_name, env_name)
-                ax.set_axis_off()
-                
-                # Get the frame for this step
-                frame = frames[c]
-                
-                # Create a nested gridspec for this cell to add framing
-                inner = ax.get_subplotspec().subgridspec(1, 1, wspace=0.0, hspace=0.0)
-                subax = fig.add_subplot(inner[0, 0])
-                subax.imshow(frame)
-                subax.set_xticks([])
-                subax.set_yticks([])
-                subax.set_frame_on(True)
-                for spine in subax.spines.values():
+                ax.imshow(frames[c_step])
+                ax.set_xticks([])
+                ax.set_yticks([])
+                for spine in ax.spines.values():
                     spine.set_visible(True)
-                    spine.set_linewidth(1.0)
+                    spine.set_linewidth(0.8)
                     spine.set_edgecolor('black')
-                
-                # Add step label above image
-                subax.set_title(f'step {step}', fontsize=8, pad=3)
-                
-                # Add vertical environment label on the Y-axis for leftmost images
-                if c == 0:
-                    subax.set_ylabel(env_name, fontsize=10, fontweight='bold')
-                
-                # Add "sending <color>" at bottom right for speaker-listener env
-                if env_name == 'simple_speaker_listener_v4' and speaker_note is not None:
-                    subax.text(
-                        0.98,
-                        0.02,
-                        speaker_note,
-                        transform=subax.transAxes,
-                        ha='right',
-                        va='bottom',
-                        fontsize=9,
-                        color='darkred',
-                        fontweight='bold',
-                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='none'),
+
+                # Agent label above first step of each group, top row only
+                if r == 0 and c_step == n_steps // 2:
+                    ax.set_title(agent_name.upper(), fontsize=10, fontweight='bold', pad=5)
+
+                # Env label on the very first column only
+                if a_idx == 0 and c_step == 0:
+                    ax.set_ylabel(
+                        env_name.replace('_v4', '').replace('_v3', '').replace('_', ' '),
+                        fontsize=9, fontweight='bold', labelpad=4,
                     )
 
-        fig.tight_layout()
-        out_pdf = OUT_DIR / f'validation_grid_{agent_name}.pdf'
-        out_png = OUT_DIR / f'validation_grid_{agent_name}.png'
-        fig.savefig(out_pdf, bbox_inches='tight')
-        fig.savefig(out_png, bbox_inches='tight')
-        out_paths.append(out_pdf)
-        plt.close(fig)
+                if env_name == 'simple_speaker_listener_v4' and speaker_note is not None:
+                    label, hex_color = speaker_note
+                    ax.text(
+                        0.97, 0.03, label,
+                        transform=ax.transAxes,
+                        ha='right', va='bottom',
+                        fontsize=9, color=hex_color, fontweight='bold',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.9, edgecolor='none'),
+                    )
 
-    return out_paths[0]
+    out_pdf = OUT_DIR / 'validation_grid.pdf'
+    out_png = OUT_DIR / 'validation_grid.png'
+    fig.savefig(out_pdf, bbox_inches='tight')
+    fig.savefig(out_png, bbox_inches='tight')
+    plt.close(fig)
+    return out_pdf
 
 
 if __name__ == '__main__':
