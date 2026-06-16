@@ -1,10 +1,10 @@
-#!/bin/bash
+#!/bin/sh
 # Train all agents on all environments
 
 set -e
 
-AGENTS=("maddpg" "maac")
-ENVIRONMENTS=("simple_spread_v3" "simple_adversary_v3" "simple_tag_v3" "simple_push_v3" "simple_crypto_v3")
+AGENTS="maddpg maac"
+ENVIRONMENTS="simple_speaker_listener_v4 simple_spread_v3 simple_adversary_v3 simple_tag_v3 simple_push_v3 simple_crypto_v3"
 
 # Cooperative comunication: simple_speaker_listener_v4
 # Cooperative navigation: simple_spread_v3
@@ -13,11 +13,13 @@ ENVIRONMENTS=("simple_spread_v3" "simple_adversary_v3" "simple_tag_v3" "simple_p
 # Predator-prey: simple_tag_v3
 # Covert communication: simple_crypto_v3
 
-TOTAL=$((${#AGENTS[@]} * ${#ENVIRONMENTS[@]}))
+AGENT_COUNT=$(set -- $AGENTS; echo $#)
+ENVIRONMENT_COUNT=$(set -- $ENVIRONMENTS; echo $#)
+TOTAL=$((AGENT_COUNT * ENVIRONMENT_COUNT))
 COUNT=0
 
-for agent in "${AGENTS[@]}"; do
-    for env in "${ENVIRONMENTS[@]}"; do
+for agent in $AGENTS; do
+    for env in $ENVIRONMENTS; do
         COUNT=$((COUNT + 1))
         echo "[$COUNT/$TOTAL] Training $agent on $env..."
         ./.venv/bin/python main.py --agent "$agent" --config "configs/$agent.yaml" --override "common.env=$env" --train

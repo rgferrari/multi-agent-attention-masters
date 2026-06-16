@@ -90,8 +90,8 @@ def train_maac(env, agent: AttentionSAC, device: torch.device, args) -> None:
                 agent.prep_training("gpu" if device.type == "cuda" else "cpu")
                 for _ in range(args.maac_num_updates):
                     sample = buffer.sample(args.maac_batch_size, to_gpu=args.use_gpu)
-                    agent.update_critic(sample)
-                    agent.update_policies(sample)
+                    agent.update_critic(sample, logger=writer)
+                    agent.update_policies(sample, logger=writer)
                     agent.update_all_targets()
                 agent.prep_rollouts("gpu" if device.type == "cuda" else "cpu")
 
