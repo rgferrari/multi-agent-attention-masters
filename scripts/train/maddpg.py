@@ -18,8 +18,11 @@ def train_maddpg(env, maddpg: MADDPG, args) -> None:
     except ImportError as exc:
         raise RuntimeError("Missing tensorboard. Install with: pip install tensorboard") from exc
 
-    log_base = os.path.join(args.log_dir, "maddpg", args.env)
-    save_base = os.path.join(args.save_dir, "maddpg", args.env)
+    # Default layout is runs/maddpg/<env>/runN; callers (e.g. MAMuJoCo) may
+    # override the relative path via args.run_subpath.
+    rel = getattr(args, "run_subpath", None) or os.path.join("maddpg", args.env)
+    log_base = os.path.join(args.log_dir, rel)
+    save_base = os.path.join(args.save_dir, rel)
     log_dir, save_dir = get_next_shared_run_dirs(log_base, save_base)
     writer = SummaryWriter(log_dir=log_dir)
 
