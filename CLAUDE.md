@@ -6,9 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A research framework comparing two multi-agent reinforcement learning (MARL) algorithms — **MAAC** (Multi-Agent Actor-Critic with attention) and **MADDPG** (Multi-Agent DDPG) — trained on [MPE2](https://github.com/Farama-Foundation/PettingZoo) cooperative/competitive multi-agent environments (simple_spread, simple_adversary, simple_tag, simple_push, simple_crypto, simple_speaker_listener).
 
+## Setup
+
+Requires Python 3.10 (pinned by `pygame` and `numpy` constraints in `requirements.txt`).
+
+```bash
+conda create -n multiagents python=3.10
+conda activate multiagents
+pip install -r requirements.txt
+```
+
 ## Commands
 
-**Train a single agent:**
+**Train a single agent (MPE2):**
 ```bash
 python main.py --agent maac --config configs/maac.yaml --train
 python main.py --agent maddpg --config configs/maddpg.yaml --train
@@ -25,6 +35,18 @@ python main.py --agent maac --config configs/maac.yaml \
 ./train_all.sh
 ```
 
+**Train on MAMuJoCo (continuous control):**
+```bash
+# MADDPG
+python train_mamujoco.py --config configs/mamujoco_maddpg.yaml --train
+python train_mamujoco.py --config configs/mamujoco_maddpg.yaml --scenario Ant --agent_conf 2x4 --train
+
+# MAAC continuous (attention critic + Gaussian policy)
+python train_mamujoco_maac.py --config configs/maac_continuous.yaml --train
+python train_mamujoco_maac.py --config configs/maac_continuous.yaml --scenario Ant --agent_conf 2x4 --train
+```
+Run/checkpoint dirs land under `runs/mamujoco/<scenario>/{maddpg|maac_continuous}/runN/`.
+
 **Evaluate a trained checkpoint:**
 ```bash
 python scripts/test.py --agent maac --config configs/maac.yaml \
@@ -32,10 +54,25 @@ python scripts/test.py --agent maac --config configs/maac.yaml \
   --episodes 20 --render_mode human
 ```
 
+**Monitor training:**
+```bash
+tensorboard --logdir runs/
+```
+
 **Generate report plots:**
 ```bash
 python reports/generate_mean_reward_plots.py
 python reports/validate_and_plot_mpe_runs.py
+python reports/plot_episode_length_by_env.py
+python reports/plot_training_time_by_env.py
+```
+
+**Sync checkpoints/runs with Hugging Face Hub:**
+```bash
+huggingface-cli login  # once
+python scripts/hf_sync.py --repo your-username/multi-agent-attention-masters           # upload both
+python scripts/hf_sync.py --repo your-username/multi-agent-attention-masters --download # download
+# --checkpoints / --runs to sync only one folder; --dry-run to preview upload
 ```
 
 ## Architecture
@@ -62,6 +99,12 @@ Both loops follow the same structure: reset env → rollout with policy → stor
 - [utils/agents.py](agents/maac/utils/agents.py) — per-agent policy with discrete action output
 - [utils/buffer.py](agents/maac/utils/buffer.py) — circular replay buffer using numpy object arrays (handles variable-length obs per agent)
 - Discrete action spaces only. Attention entropy is regularized alongside policy entropy (SAC-style reward scaling).
+
+**MAAC Continuous** ([agents/maac_continuous/](agents/maac_continuous/)):
+- [attention_sac_continuous.py](agents/maac_continuous/attention_sac_continuous.py) — `AttentionSACContinuous`; same structure as MAAC but for continuous spaces
+- [utils/policies.py](agents/maac_continuous/utils/policies.py) — `GaussianPolicy`: mean + log_std, tanh squashing, reparameterization trick
+- [utils/critics.py](agents/maac_continuous/utils/critics.py) — `AttentionCriticContinuous`: scalar Q output; Q head receives the agent's own SA encoding (not state-only) so the reparameterization gradient flows through it
+- Policy update is per-agent: agent `i` uses its reparameterized action; others use buffer actions (no cross-agent gradient leakage)
 
 **MADDPG** ([agents/maddpg_torch/](agents/maddpg_torch/)):
 - [maddpg.py](agents/maddpg_torch/maddpg.py) — top-level `MADDPG` class
