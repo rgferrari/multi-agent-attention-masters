@@ -1,0 +1,5 @@
+scenario,agent,minutes
+ma_ant_2x4,maddpg,180.901187
+ma_ant_2x4,maac_continuous,197.866095
+ma_halfcheetah_2x3,maddpg,258.011280
+ma_halfcheetah_2x3,maac_continuous,455.750218
