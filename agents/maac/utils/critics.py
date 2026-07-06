@@ -87,7 +87,8 @@ class AttentionCritic(nn.Module):
             p.grad.data.mul_(1. / self.nagents)
 
     def forward(self, inps, agents=None, return_q=True, return_all_q=False,
-                regularize=False, return_attend=False, logger=None, niter=0):
+                regularize=False, attend_mag_reg=1e-3,
+                return_attend=False, logger=None, niter=0):
         """
         Inputs:
             inps (list of PyTorch Matrices): Inputs to each agents' encoder
@@ -141,6 +142,7 @@ class AttentionCritic(nn.Module):
                 all_attend_probs[i].append(attend_weights)
         # calculate Q per agent
         all_rets = []
+        all_head_entropies = []
         for i, a_i in enumerate(agents):
             # ``probs`` has shape [batch, 1, n_other_agents]. In two-agent
             # environments this becomes [batch, 1, 1], so ``squeeze()`` would
@@ -148,6 +150,7 @@ class AttentionCritic(nn.Module):
             # Sum explicitly over the attention axis instead.
             head_entropies = [(-((probs + 1e-8).log() * probs).sum(dim=2)
                                .mean()) for probs in all_attend_probs[i]]
+            all_head_entropies.extend(head_entropies)
             agent_rets = []
             critic_in = torch.cat((s_encodings[i], *other_all_values[i]), dim=1)
             all_q = self.critics[a_i](critic_in)
@@ -158,22 +161,21 @@ class AttentionCritic(nn.Module):
             if return_all_q:
                 agent_rets.append(all_q)
             if regularize:
-                # regularize magnitude of attention logits
-                attend_mag_reg = 1e-3 * sum((logit**2).mean() for logit in
-                                            all_attend_logits[i])
+                attend_mag_reg = attend_mag_reg * sum((logit**2).mean() for logit in
+                                                      all_attend_logits[i])
                 regs = (attend_mag_reg,)
                 agent_rets.append(regs)
             if return_attend:
-                agent_rets.append(np.array(all_attend_probs[i]))
-            if logger is not None:
-                logger.add_scalars('agent%i/attention' % a_i,
-                                   dict(('head%i_entropy' % h_i, ent) for h_i, ent
-                                        in enumerate(head_entropies)),
-                                   niter)
+                agent_rets.append(np.stack([p.detach().cpu().numpy()
+                                            for p in all_attend_probs[i]]))
             if len(agent_rets) == 1:
                 all_rets.append(agent_rets[0])
             else:
                 all_rets.append(agent_rets)
+        if logger is not None:
+            logger.add_scalar('attention/mean_entropy',
+                               torch.stack(all_head_entropies).mean(),
+                               niter)
         if len(all_rets) == 1:
             return all_rets[0]
         else:

@@ -99,11 +99,8 @@ def firmmax_sample(logits, temperature, dim=1):
 
 def categorical_sample(probs, use_cuda=False):
     int_acs = torch.multinomial(probs, 1)
-    if use_cuda:
-        tensor_type = torch.cuda.FloatTensor
-    else:
-        tensor_type = torch.FloatTensor
-    acs = Variable(tensor_type(*probs.shape).fill_(0)).scatter_(1, int_acs, 1)
+    device = probs.device
+    acs = torch.zeros(*probs.shape, device=device).scatter_(1, int_acs, 1)
     return int_acs, acs
 
 def disable_gradients(module):

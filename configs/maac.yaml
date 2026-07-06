@@ -32,3 +32,4 @@ maac:
   pol_hidden_dim: 64
   critic_hidden_dim: 64
   attend_heads: 4
+  attend_mag_reg: 0.001

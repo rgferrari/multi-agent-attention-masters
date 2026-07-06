@@ -17,6 +17,7 @@ class AttentionSAC(object):
                  reward_scale=10.,
                  pol_hidden_dim=128,
                  critic_hidden_dim=128, attend_heads=4,
+                 attend_mag_reg=1e-3,
                  **kwargs):
         """
         Inputs:
@@ -53,6 +54,7 @@ class AttentionSAC(object):
         self.pi_lr = pi_lr
         self.q_lr = q_lr
         self.reward_scale = reward_scale
+        self.attend_mag_reg = attend_mag_reg
         self.pol_dev = 'cpu'  # device for policies
         self.critic_dev = 'cpu'  # device for critics
         self.trgt_pol_dev = 'cpu'  # device for target policies
@@ -94,6 +96,7 @@ class AttentionSAC(object):
         critic_in = list(zip(obs, acs))
         next_qs = self.target_critic(trgt_critic_in)
         critic_rets = self.critic(critic_in, regularize=True,
+                                  attend_mag_reg=self.attend_mag_reg,
                                   logger=logger, niter=self.niter)
         q_loss = 0
         for a_i, nq, log_pi, (pq, regs) in zip(range(self.nagents), next_qs,
@@ -232,6 +235,7 @@ class AttentionSAC(object):
                       pi_lr=0.01, q_lr=0.01,
                       reward_scale=10.,
                       pol_hidden_dim=128, critic_hidden_dim=128, attend_heads=4,
+                      attend_mag_reg=1e-3,
                       **kwargs):
         """
         Instantiate instance of this class from multi-agent environment
@@ -256,6 +260,7 @@ class AttentionSAC(object):
                      'pol_hidden_dim': pol_hidden_dim,
                      'critic_hidden_dim': critic_hidden_dim,
                      'attend_heads': attend_heads,
+                     'attend_mag_reg': attend_mag_reg,
                      'agent_init_params': agent_init_params,
                      'sa_size': sa_size}
         instance = cls(**init_dict)
