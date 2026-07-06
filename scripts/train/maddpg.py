@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections import deque
 
 import torch
@@ -20,7 +21,7 @@ def train_maddpg(env, maddpg: MADDPG, args) -> None:
 
     # Default layout is runs/maddpg/<env>/runN; callers (e.g. MAMuJoCo) may
     # override the relative path via args.run_subpath.
-    rel = getattr(args, "run_subpath", None) or os.path.join("maddpg", args.env)
+    rel = getattr(args, "run_subpath", None) or os.path.join("mpe2", args.env, "maddpg")
     log_base = os.path.join(args.log_dir, rel)
     save_base = os.path.join(args.save_dir, rel)
     log_dir, save_dir = get_next_shared_run_dirs(log_base, save_base)
@@ -32,7 +33,7 @@ def train_maddpg(env, maddpg: MADDPG, args) -> None:
     global_step = 0
     update_step = 0
     total_steps = args.episodes * args.max_cycles
-    progress = tqdm(total=max(1, total_steps), desc="Training", dynamic_ncols=True)
+    progress = tqdm(total=max(1, total_steps), desc="Training", dynamic_ncols=True, file=sys.stderr)
 
     best_metric = None
     epochs_no_improve = 0

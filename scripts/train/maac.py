@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections import deque
 from typing import List
 
@@ -13,6 +14,83 @@ from tqdm import tqdm
 from agents.maac.attention_sac import AttentionSAC
 from agents.maac.utils.buffer import ReplayBuffer
 from scripts.train.utils import get_next_shared_run_dirs
+
+
+_AGENT_ABBREVS = {
+    "adversary": "adv",
+    "agent": "a",
+    "good_agent": "good",
+    "leadadversary": "lead_adv",
+}
+
+
+def _agent_label(agent_id: str) -> str:
+    for prefix, abbrev in _AGENT_ABBREVS.items():
+        if agent_id.startswith(prefix + "_"):
+            return abbrev + "_" + agent_id[len(prefix) + 1:]
+    return agent_id
+
+
+def _compute_attention_matrix(agent: "AttentionSAC", sample, agent_ids, device):
+    """Return (mean_attn, std_attn, labels) as [n, n] numpy arrays (diagonal = 0).
+
+    ``mean_attn`` averages attention weights over heads and batch; ``std_attn``
+    is their std over the batch (averaged over heads). High std means the
+    connection's weight varies a lot across states -- i.e. attention is doing
+    state-dependent work that a flat batch-mean would hide.
+    """
+    obs, acs, _, _, _ = sample
+    n = len(agent_ids)
+    critic_in = list(zip(obs, acs))
+
+    agent.critic.eval()
+    with torch.no_grad():
+        attend_per_agent = agent.critic(critic_in, return_q=False, return_attend=True)
+    agent.critic.train()
+
+    if n == 1:
+        attend_per_agent = [attend_per_agent]
+
+    mean_attn = np.zeros((n, n))
+    std_attn = np.zeros((n, n))
+    for i, weights in enumerate(attend_per_agent):
+        # weights: [n_heads, batch, 1, n_other]
+        mean_w = weights.mean(axis=(0, 1, 2))           # [n_other]
+        std_w = weights.std(axis=1).mean(axis=(0, 1))   # std over batch, avg heads
+        others = [j for j in range(n) if j != i]
+        for k, j in enumerate(others):
+            mean_attn[i, j] = float(mean_w[k])
+            std_attn[i, j] = float(std_w[k])
+
+    labels = [_agent_label(a) for a in agent_ids]
+    return mean_attn, std_attn, labels
+
+
+def _attention_heatmap_figure(attn: np.ndarray, labels, title, vmax=1.0, cmap='Blues'):
+    """Build a matplotlib Figure from a precomputed attention matrix."""
+    from matplotlib.figure import Figure
+
+    n = len(labels)
+    fig = Figure(figsize=(max(4, n + 1), max(3, n)))
+    ax = fig.add_subplot(111)
+    im = ax.imshow(attn, vmin=0, vmax=vmax, cmap=cmap)
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.set_xlabel('Attended agent')
+    ax.set_ylabel('Attending agent')
+    ax.set_title(title)
+    fig.colorbar(im, ax=ax)
+    thresh = 0.6 * vmax
+    for row in range(n):
+        for col in range(n):
+            if row != col:
+                color = 'white' if attn[row, col] > thresh else 'black'
+                ax.text(col, row, f'{attn[row, col]:.2f}',
+                        ha='center', va='center', fontsize=8, color=color)
+    fig.tight_layout()
+    return fig
 
 
 def _maac_actions_with_onehot(
@@ -34,9 +112,17 @@ def train_maac(env, agent: AttentionSAC, device: torch.device, args) -> None:
     except ImportError as exc:
         raise RuntimeError("Missing tensorboard. Install with: pip install tensorboard") from exc
 
-    log_base = os.path.join(args.log_dir, "maac", args.env)
-    save_base = os.path.join(args.save_dir, "maac", args.env)
-    log_dir, save_dir = get_next_shared_run_dirs(log_base, save_base)
+    rel = getattr(args, "run_subpath", None) or os.path.join("mpe2", args.env, "maac")
+    log_base = os.path.join(args.log_dir, rel)
+    save_base = os.path.join(args.save_dir, rel)
+    run_name = getattr(args, 'run_name', None)
+    if run_name:
+        log_dir = os.path.join(log_base, run_name)
+        save_dir = os.path.join(save_base, run_name)
+        os.makedirs(log_dir, exist_ok=True)
+        os.makedirs(save_dir, exist_ok=True)
+    else:
+        log_dir, save_dir = get_next_shared_run_dirs(log_base, save_base)
     writer = SummaryWriter(log_dir=log_dir)
 
     agent_ids = list(env.agents)
@@ -52,7 +138,7 @@ def train_maac(env, agent: AttentionSAC, device: torch.device, args) -> None:
 
     global_step = 0
     total_steps = args.episodes * args.max_cycles
-    progress = tqdm(total=max(1, total_steps), desc="Training", dynamic_ncols=True)
+    progress = tqdm(total=max(1, total_steps), desc="Training", dynamic_ncols=True, file=sys.stderr)
 
     best_metric = None
     epochs_no_improve = 0
@@ -108,6 +194,23 @@ def train_maac(env, agent: AttentionSAC, device: torch.device, args) -> None:
         writer.add_scalar("episode/length", steps, ep)
         for i, agent_id in enumerate(agent_ids):
             writer.add_scalar(f"episode/agent_reward/{agent_id}", float(ep_rewards[i]), ep)
+
+        attn_heatmap_every = getattr(args, 'attn_heatmap_every', 100)
+        if (ep + 1) % attn_heatmap_every == 0 and len(buffer) >= args.maac_batch_size:
+            sample = buffer.sample(args.maac_batch_size, to_gpu=args.use_gpu)
+            attn, attn_std, labels = _compute_attention_matrix(agent, sample, agent_ids, device)
+            writer.add_figure('attention/heatmap_mean',
+                              _attention_heatmap_figure(attn, labels, 'Mean attention weights'), ep)
+            std_vmax = max(0.05, float(attn_std.max()))
+            writer.add_figure('attention/heatmap_std',
+                              _attention_heatmap_figure(attn_std, labels,
+                                                        'Attention std across states',
+                                                        vmax=std_vmax, cmap='Reds'), ep)
+            for i, src in enumerate(labels):
+                for j, dst in enumerate(labels):
+                    if i != j:
+                        writer.add_scalar(f'attention/{src}_to_{dst}', attn[i, j], ep)
+                        writer.add_scalar(f'attention/{src}_to_{dst}_std', attn_std[i, j], ep)
 
         if args.save_every > 0 and (ep + 1) % args.save_every == 0:
             ckpt_path = os.path.join(save_dir, f"maac_ep{ep + 1}.pt")
