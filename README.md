@@ -1,11 +1,12 @@
 # Multi-Agent Attention Masters
 
-Comparison of two multi-agent reinforcement learning (MARL) algorithms trained on [MPE2](https://github.com/Farama-Foundation/PettingZoo) environments:
+Comparison of multi-agent reinforcement learning (MARL) algorithms — **MAAC**, **MADDPG**, and **MAPPO** — trained on [MPE2](https://github.com/Farama-Foundation/PettingZoo) cooperative/competitive environments, with continuous-control support on MAMuJoCo.
 
 - **MAAC** — Multi-Agent Actor-Critic with attention-based centralized critic
-- **MADDPG** — Multi-Agent Deep Deterministic Policy Gradient (PyTorch)
+- **MADDPG** — Multi-Agent Deep Deterministic Policy Gradient (PyTorch port of the original TF1 implementation)
+- **MAPPO** — Multi-Agent PPO, on-policy with a per-agent state-value critic
 
-Both follow Centralized Training Decentralized Execution (CTDE): agents share information during training but act independently at inference.
+All three follow Centralized Training, Decentralized Execution (CTDE): agents act on their own local observation, while the critic is centralized during training. MAAC and MADDPG are off-policy (replay buffer); MAPPO is on-policy (rollout buffer + GAE).
 
 ## Environments
 
@@ -14,17 +15,21 @@ Both follow Centralized Training Decentralized Execution (CTDE): agents share in
 | `simple_spread_v3` | Cooperative navigation |
 | `simple_adversary_v3` | Physical deception |
 | `simple_tag_v3` | Predator-prey |
-| `simple_push_v2` | Keep-away |
+| `simple_push_v3` | Keep-away |
 | `simple_crypto_v3` | Covert communication |
 | `simple_speaker_listener_v4` | Cooperative communication |
 
+MAMuJoCo (continuous control) is also supported — e.g. HalfCheetah (`2x3`, `6x1` factorizations) and Ant (`2x4`, `4x2`, `2x4d`). See Training below.
+
 ## Setup
 
-```bash
-pip install huggingface_hub  # only needed for checkpoint sync
-```
+Requires Python 3.10 (pinned by `pygame`/`numpy` constraints in `requirements.txt`).
 
-The project depends on `torch`, `gymnasium`, `mpe2`, `pyyaml`, and `tensorboard`. Use the environment that has all of these available.
+```bash
+conda create -n multiagents python=3.10
+conda activate multiagents
+pip install -r requirements.txt
+```
 
 ## Training
 
@@ -32,6 +37,7 @@ The project depends on `torch`, `gymnasium`, `mpe2`, `pyyaml`, and `tensorboard`
 # Train with default config
 python main.py --agent maac --config configs/maac.yaml --train
 python main.py --agent maddpg --config configs/maddpg.yaml --train
+python main.py --agent mappo --config configs/mappo.yaml --train
 
 # Override any config value (dot-path notation, repeat flag for multiple)
 python main.py --agent maddpg --config configs/maddpg.yaml \
@@ -43,7 +49,20 @@ python main.py --agent maddpg --config configs/maddpg.yaml \
 ./train_all.sh
 ```
 
-Config files live in `configs/`. All hyperparameters are documented there. Common keys (`env`, `episodes`, `seed`, etc.) sit under `common:`; algorithm-specific keys under `maac:` or `maddpg:`.
+Config files live in `configs/`. All hyperparameters are documented there. Common keys (`env`, `episodes`, `seed`, etc.) sit under `common:`; algorithm-specific keys under `maac:`, `maddpg:`, or `mappo:`.
+
+### MAMuJoCo (continuous control)
+
+```bash
+python train_mamujoco.py --config configs/mamujoco_maddpg.yaml --train
+python train_mamujoco_maac.py --config configs/maac_continuous.yaml --train
+python train_mamujoco_mappo.py --config configs/mamujoco_mappo.yaml --train
+
+# Pick a scenario/factorization (defaults to HalfCheetah 2x3)
+python train_mamujoco_mappo.py --config configs/mamujoco_mappo.yaml --scenario Ant --agent_conf 2x4 --train
+```
+
+Run/checkpoint dirs land under `runs/mamujoco/<scenario>/{maddpg|maac_continuous|mappo}/runN/`.
 
 ## Evaluation
 
@@ -77,7 +96,7 @@ Logged metrics:
 | `agentN/policy_entropy` | Policy entropy (MAAC only) |
 | `losses/q_loss`, `grad_norms/*` | Attention critic metrics (MAAC only) |
 
-Run directories are created automatically under `runs/{algorithm}/{env}/run{N}/` and checkpoints under `checkpoints/{algorithm}/{env}/run{N}/`, with matching run numbers.
+Run directories are created automatically under `runs/{algorithm}/{env}/run{N}/` (MPE2) or `runs/mamujoco/<scenario>/{algorithm}/run{N}/` (MAMuJoCo), with matching checkpoint dirs under `checkpoints/` using the same run numbers.
 
 ## Checkpoint Sync
 
@@ -100,15 +119,19 @@ Pass `--checkpoints` or `--runs` to sync only one folder. The private repo is cr
 
 ```
 agents/
-  maac/               MAAC algorithm (attention SAC)
-  maddpg_torch/       MADDPG algorithm (PyTorch)
+  maac/               MAAC algorithm (attention SAC, discrete)
+  maac_continuous/    MAAC for continuous control (MAMuJoCo)
+  maddpg_torch/       MADDPG algorithm (PyTorch, discrete + continuous)
+  maddpg/             Original TF1 MADDPG reference (ported to maddpg_torch/, kept for reference)
+  mappo/              MAPPO algorithm (discrete + continuous)
 configs/              YAML hyperparameter files
 scripts/
-  train/              Training loops (maac.py, maddpg.py)
+  train/              Training loops (maac.py, maac_continuous.py, maddpg.py, mappo.py)
   test.py             Checkpoint evaluation
   hf_sync.py          HuggingFace Hub sync
-reports/              Plot generation scripts
-main.py               Entry point
+reports/              Plot generation scripts (mpe2/, mamujoco/)
+main.py               Entry point (MPE2)
+train_mamujoco*.py    Entry points (MAMuJoCo, one per algorithm)
 config.py             YAML loader with CLI override support
 train_all.sh          Train all agents × all environments
 ```
