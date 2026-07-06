@@ -4,6 +4,7 @@
 import argparse
 import importlib
 import os
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 from types import SimpleNamespace
 from typing import Dict, List
 
@@ -125,6 +126,7 @@ def _make_args(agent: str, cfg: Dict[str, object], cli_train: bool) -> argparse.
         "render_mode": "human",
         "continuous_actions": True,
         "use_gpu": False,
+        "run_name": None,
         "log_dir": "runs",
         "save_dir": "checkpoints",
         "save_every": 10,
@@ -163,6 +165,7 @@ def _make_args(agent: str, cfg: Dict[str, object], cli_train: bool) -> argparse.
         "pol_hidden_dim": 128,
         "critic_hidden_dim": 128,
         "attend_heads": 4,
+        "attend_mag_reg": 1e-3,
     }
 
     common = _with_defaults(cfg.get("common"), common_defaults)
@@ -184,11 +187,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--agent", required=True, choices=["maac", "maddpg", "random"], help="Agent type")
     parser.add_argument("--config", required=True, help="Path to YAML config")
-    parser.add_argument("--override", action="append", default=[], help="Override config key=value (dot paths)")
+    parser.add_argument("--override", nargs='+', action="append", default=[], help="Override config key=value (dot paths)")
     parser.add_argument("--train", action="store_true", help="Force training mode")
     args = parser.parse_args()
 
-    cfg = load_config(args.config, args.override)
+    overrides = [item for group in args.override for item in group]
+    cfg = load_config(args.config, overrides)
     run_args = _make_args(args.agent, cfg, args.train)
 
     env_module = importlib.import_module(f"mpe2.{run_args.env}")

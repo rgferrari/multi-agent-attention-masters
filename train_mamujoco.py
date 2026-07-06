@@ -27,6 +27,7 @@ Examples
 
 import argparse
 import os
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 import torch
 from gymnasium_robotics import mamujoco_v1
@@ -53,11 +54,12 @@ def main() -> None:
     parser.add_argument("--config", required=True, help="Path to YAML config")
     parser.add_argument("--scenario", default=None, help="MAMuJoCo scenario, e.g. HalfCheetah, Ant")
     parser.add_argument("--agent_conf", default=None, help="Joint factorization, e.g. 2x3 (HalfCheetah), 2x4 (Ant)")
-    parser.add_argument("--override", action="append", default=[], help="Override config key=value (dot paths)")
+    parser.add_argument("--override", nargs='+', action="append", default=[], help="Override config key=value (dot paths)")
     parser.add_argument("--train", action="store_true", help="Force training mode")
     args = parser.parse_args()
 
-    cfg = load_config(args.config, args.override)
+    overrides = [item for group in args.override for item in group]
+    cfg = load_config(args.config, overrides)
     run_args = _make_args("maddpg", cfg, args.train)
 
     # scenario / agent_conf: CLI flag overrides config, which overrides built-in default.
