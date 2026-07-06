@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A research framework comparing multi-agent reinforcement learning (MARL) algorithms — **MAAC** (Multi-Agent Actor-Critic with attention), **MADDPG** (Multi-Agent DDPG), and **MAPPO** (Multi-Agent PPO) — trained on [MPE2](https://github.com/Farama-Foundation/PettingZoo) cooperative/competitive multi-agent environments (simple_spread, simple_adversary, simple_tag, simple_push, simple_crypto, simple_speaker_listener). MAAC/MADDPG are off-policy (replay buffer); MAPPO is on-policy (rollout buffer + GAE + PPO).
 
+## Research Log
+
+[RESEARCH_LOG.md](RESEARCH_LOG.md) records *why* changes were made, not just what — kept for thesis traceability. Always add an entry there after making a change to the agents (`agents/`) or environments (MPE2/MAMuJoCo configs, training loops): what changed and its purpose. Follow the entry format documented at the top of that file.
+
 ## Setup
 
 Requires Python 3.10 (pinned by `pygame` and `numpy` constraints in `requirements.txt`).
