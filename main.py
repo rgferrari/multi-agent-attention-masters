@@ -14,9 +14,11 @@ import torch
 from agents.maac.attention_sac import AttentionSAC
 from agents.maddpg_torch import MADDPG
 from agents.maddpg_torch.maddpg import MADDPGConfig
+from agents.mappo import MAPPO, MAPPOConfig
 from config import load_config
 from scripts.train.maac import train_maac
 from scripts.train.maddpg import train_maddpg
+from scripts.train.mappo import train_mappo
 
 
 def _warn_if_no_display(render_mode: str) -> None:
@@ -110,6 +112,27 @@ def _build_maddpg(env, device: torch.device, args: argparse.Namespace) -> MADDPG
     return MADDPG(agent_ids, obs_spaces, act_spaces, device=device, config=cfg)
 
 
+def _build_mappo(env, device: torch.device, args: argparse.Namespace) -> MAPPO:
+    agent_ids = list(env.agents)
+    obs_spaces = [env.observation_space(a) for a in agent_ids]
+    act_spaces = [env.action_space(a) for a in agent_ids]
+    cfg = MAPPOConfig(
+        gamma=args.gamma,
+        gae_lambda=args.gae_lambda,
+        clip_param=args.clip_param,
+        ppo_epoch=args.ppo_epoch,
+        num_mini_batch=args.num_mini_batch,
+        entropy_coef=args.entropy_coef,
+        value_loss_coef=args.value_loss_coef,
+        max_grad_norm=args.max_grad_norm,
+        actor_lr=args.actor_lr,
+        critic_lr=args.critic_lr,
+        hidden_dim=args.hidden_dim,
+        use_clipped_value_loss=args.use_clipped_value_loss,
+    )
+    return MAPPO(agent_ids, obs_spaces, act_spaces, device=device, config=cfg)
+
+
 def _with_defaults(user_cfg: Dict[str, object] | None, defaults: Dict[str, object]) -> Dict[str, object]:
     merged = defaults.copy()
     if user_cfg:
@@ -167,6 +190,20 @@ def _make_args(agent: str, cfg: Dict[str, object], cli_train: bool) -> argparse.
         "attend_heads": 4,
         "attend_mag_reg": 1e-3,
     }
+    mappo_defaults = {
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "clip_param": 0.2,
+        "ppo_epoch": 15,
+        "num_mini_batch": 1,
+        "entropy_coef": 0.01,
+        "value_loss_coef": 1.0,
+        "max_grad_norm": 10.0,
+        "actor_lr": 5e-4,
+        "critic_lr": 5e-4,
+        "hidden_dim": 64,
+        "use_clipped_value_loss": True,
+    }
 
     common = _with_defaults(cfg.get("common"), common_defaults)
     common["train"] = bool(cli_train or common.get("train"))
@@ -174,6 +211,10 @@ def _make_args(agent: str, cfg: Dict[str, object], cli_train: bool) -> argparse.
     if agent == "maddpg":
         maddpg_cfg = _with_defaults(cfg.get("maddpg"), maddpg_defaults)
         merged = {**common, **maddpg_cfg}
+        return SimpleNamespace(**merged)
+    if agent == "mappo":
+        mappo_cfg = _with_defaults(cfg.get("mappo"), mappo_defaults)
+        merged = {**common, **mappo_cfg}
         return SimpleNamespace(**merged)
     if agent == "maac":
         maac_cfg = _with_defaults(cfg.get("maac"), maac_defaults)
@@ -185,7 +226,7 @@ def _make_args(agent: str, cfg: Dict[str, object], cli_train: bool) -> argparse.
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--agent", required=True, choices=["maac", "maddpg", "random"], help="Agent type")
+    parser.add_argument("--agent", required=True, choices=["maac", "maddpg", "mappo", "random"], help="Agent type")
     parser.add_argument("--config", required=True, help="Path to YAML config")
     parser.add_argument("--override", nargs='+', action="append", default=[], help="Override config key=value (dot paths)")
     parser.add_argument("--train", action="store_true", help="Force training mode")
@@ -206,6 +247,7 @@ def main() -> None:
     device = torch.device("cuda" if run_args.use_gpu and torch.cuda.is_available() else "cpu")
     agent = None
     maddpg = None
+    mappo = None
     if args.agent == "maac":
         env.reset(seed=run_args.seed)
         agent = _build_maac(env, run_args)
@@ -213,6 +255,9 @@ def main() -> None:
     elif args.agent == "maddpg":
         env.reset(seed=run_args.seed)
         maddpg = _build_maddpg(env, device, run_args)
+    elif args.agent == "mappo":
+        env.reset(seed=run_args.seed)
+        mappo = _build_mappo(env, device, run_args)
 
     if run_args.train and args.agent == "maac" and agent is not None:
         train_maac(env, agent, device, run_args)
@@ -220,6 +265,10 @@ def main() -> None:
         return
     if run_args.train and args.agent == "maddpg" and maddpg is not None:
         train_maddpg(env, maddpg, run_args)
+        env.close()
+        return
+    if run_args.train and args.agent == "mappo" and mappo is not None:
+        train_mappo(env, mappo, run_args)
         env.close()
         return
 
@@ -234,6 +283,8 @@ def main() -> None:
                 actions = _maac_actions(agent, obs, device, agent_ids)
             elif args.agent == "maddpg" and maddpg is not None:
                 actions, actions_onehot = maddpg.select_actions(obs, explore=False)
+            elif args.agent == "mappo" and mappo is not None:
+                actions, _, _, _ = mappo.select_actions(obs, deterministic=True)
             else:
                 actions = _random_actions(env, agent_ids)
             obs, rewards, terminations, truncations, infos = env.step(actions)

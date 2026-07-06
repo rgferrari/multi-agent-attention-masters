@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Is
 
-A research framework comparing two multi-agent reinforcement learning (MARL) algorithms — **MAAC** (Multi-Agent Actor-Critic with attention) and **MADDPG** (Multi-Agent DDPG) — trained on [MPE2](https://github.com/Farama-Foundation/PettingZoo) cooperative/competitive multi-agent environments (simple_spread, simple_adversary, simple_tag, simple_push, simple_crypto, simple_speaker_listener).
+A research framework comparing multi-agent reinforcement learning (MARL) algorithms — **MAAC** (Multi-Agent Actor-Critic with attention), **MADDPG** (Multi-Agent DDPG), and **MAPPO** (Multi-Agent PPO) — trained on [MPE2](https://github.com/Farama-Foundation/PettingZoo) cooperative/competitive multi-agent environments (simple_spread, simple_adversary, simple_tag, simple_push, simple_crypto, simple_speaker_listener). MAAC/MADDPG are off-policy (replay buffer); MAPPO is on-policy (rollout buffer + GAE + PPO).
 
 ## Setup
 
@@ -22,6 +22,7 @@ pip install -r requirements.txt
 ```bash
 python main.py --agent maac --config configs/maac.yaml --train
 python main.py --agent maddpg --config configs/maddpg.yaml --train
+python main.py --agent mappo --config configs/mappo.yaml --train
 ```
 
 **Override config values (dot-path notation):**
@@ -44,8 +45,12 @@ python train_mamujoco.py --config configs/mamujoco_maddpg.yaml --scenario Ant --
 # MAAC continuous (attention critic + Gaussian policy)
 python train_mamujoco_maac.py --config configs/maac_continuous.yaml --train
 python train_mamujoco_maac.py --config configs/maac_continuous.yaml --scenario Ant --agent_conf 2x4 --train
+
+# MAPPO (Gaussian policy handles continuous natively; same class as MPE2)
+python train_mamujoco_mappo.py --config configs/mamujoco_mappo.yaml --train
+python train_mamujoco_mappo.py --config configs/mamujoco_mappo.yaml --scenario Ant --agent_conf 2x4 --train
 ```
-Run/checkpoint dirs land under `runs/mamujoco/<scenario>/{maddpg|maac_continuous}/runN/`.
+Run/checkpoint dirs land under `runs/mamujoco/<scenario>/{maddpg|maac_continuous|mappo}/runN/`.
 
 **Evaluate a trained checkpoint:**
 ```bash
@@ -85,11 +90,12 @@ python scripts/hf_sync.py --repo your-username/multi-agent-attention-masters --d
 
 ### Training Loops
 
-Both loops follow the same structure: reset env → rollout with policy → store in replay buffer → sample batch → update networks → log to tensorboard → checkpoint.
+The off-policy loops (MAAC/MADDPG) follow the same structure: reset env → rollout with policy → store in replay buffer → sample batch → update networks → log to tensorboard → checkpoint. MAPPO is on-policy: each "episode" collects one fresh rollout of `max_cycles` steps → compute GAE returns/advantages → run a PPO update (several epochs of clipped-surrogate minibatch SGD) → reset the rollout buffer.
 
 - [scripts/train/maac.py](scripts/train/maac.py) — MAAC training loop
 - [scripts/train/maddpg.py](scripts/train/maddpg.py) — MADDPG training loop
-- [scripts/train/utils.py](scripts/train/utils.py) — shared run-directory management (`get_run_dir`); run numbers are shared between `runs/` (tensorboard) and `checkpoints/` so logs and weights stay paired
+- [scripts/train/mappo.py](scripts/train/mappo.py) — MAPPO training loop (on-policy)
+- [scripts/train/utils.py](scripts/train/utils.py) — shared run-directory management (`get_next_shared_run_dirs`); run numbers are shared between `runs/` (tensorboard) and `checkpoints/` so logs and weights stay paired
 
 ### Algorithm Implementations
 
@@ -112,6 +118,26 @@ Both loops follow the same structure: reset env → rollout with policy → stor
 - [buffer.py](agents/maddpg_torch/buffer.py) — fixed-size float32 circular replay buffer
 - Supports both discrete (Gumbel-softmax exploration) and continuous (Gaussian noise) action spaces.
 
+**MAPPO** ([agents/mappo/](agents/mappo/)):
+- [mappo.py](agents/mappo/mappo.py) — top-level `MAPPO` class; per-agent actor + per-agent *centralized* critic (fed the concatenated global obs, value-only). A single class handles both discrete and continuous, branching on `ActionSpec` (like MADDPG) — no separate continuous variant.
+- [models.py](agents/mappo/models.py) — `Actor` (Categorical for discrete / diagonal Gaussian with state-independent `log_std` for continuous) and `Critic` (scalar V(s)). Reuses `ActionSpec`/`mlp` from `agents/maddpg_torch/models.py`.
+- [buffer.py](agents/mappo/buffer.py) — `RolloutBuffer`: on-policy, single rollout, per-agent typed arrays; `compute_returns` does per-agent GAE, `agent_minibatch_generator` yields per-agent shuffled minibatches (no cross-agent flattening) so heterogeneous obs/action dims work.
+- Per-agent independent networks (not upstream MAPPO's parameter sharing) and feedforward-only (no recurrent policy). Single-env rollouts (no vectorized threads), so batches are one episode's worth of steps.
+
+### CTDE: what each algorithm centralizes
+
+All three follow **Centralized Training, Decentralized Execution (CTDE)**: every agent acts on its *own local observation* (decentralized execution, one policy per agent), while the critic is **centralized** — it conditions on all-agent information during training. None of them use a "decentralized" (local-obs-only) critic.
+
+Where they differ is *what the critic sees* and *whether it is instantiated per-agent or shared*:
+
+| | Actor | Critic instances | Critic input | Shares teammate *actions*? |
+|---|---|---|---|---|
+| **MADDPG** | per-agent, local obs | one **per agent** | global obs **+ all actions** → Q(s,a) | ✅ yes |
+| **MAAC** | per-agent, local obs | one **shared** attention module (per-agent heads) | all agents' state-action pairs, via attention | ✅ yes |
+| **MAPPO** | per-agent, local obs | one **per agent** | global obs only → V(s) | ❌ no (state-value baseline) |
+
+The key subtlety: MADDPG and MAAC feed teammates' **actions** into the critic (action-value Q); MAPPO's critic is a **state-value** function V(s) that sees all observations but no actions — a defining property of PPO, not an omission. MADDPG and MAPPO instantiate a separate critic per agent; MAAC uses a single shared attention critic.
+
 ### Key Patterns
 
 **Device management** — call `prep_training()` before gradient updates and `prep_rollouts()` before inference; these move networks between devices and toggle `requires_grad`.
@@ -121,6 +147,7 @@ Both loops follow the same structure: reset env → rollout with policy → stor
 **Checkpoint format:**
 - MAAC saves `{'init_dict', 'agent_params', 'critic_params'}` so the full model can be reconstructed from file without a running instance
 - MADDPG saves full `state_dict()` for actors, critics, and optimizers
+- MAPPO saves full `state_dict()` for actors, critics, and optimizers (same pattern as MADDPG); reload by rebuilding via `_build_mappo` then `load_state_dict`
 
 **Action representation** — actions are passed around as `Dict[agent_id → int]` (discrete index) or `Dict[agent_id → np.ndarray]` (continuous) at environment boundaries, and converted to one-hot tensors inside training updates.
 
