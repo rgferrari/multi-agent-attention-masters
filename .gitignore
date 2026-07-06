@@ -2,3 +2,9 @@
 /checkpoints
 /runs
 **/__pycache__
+
+# MAPPO reference implementation (cloned for porting, not vendored)
+/agents/on-policy
+
+# Personal/local Claude Code settings, not shared
+/.claude/settings.local.json
