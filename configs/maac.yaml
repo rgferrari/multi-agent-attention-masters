@@ -17,6 +17,8 @@ common:
   early_stop_metric: mean_reward
   early_stop_mode: max
   train: true
+  # Write this run's report figures when training finishes.
+  auto_report: true
   lr: 0.01
 
 maac:
@@ -33,3 +35,5 @@ maac:
   critic_hidden_dim: 64
   attend_heads: 4
   attend_mag_reg: 0.001
+  # Subsample per-update loss/grad logging (1 = every update).
+  log_every: 25

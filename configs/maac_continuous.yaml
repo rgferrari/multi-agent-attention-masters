@@ -15,6 +15,8 @@ common:
   early_stop_metric: mean_reward
   early_stop_mode: max
   train: true
+  # Write this run's report figures when training finishes.
+  auto_report: true
 
 mamujoco:
   scenario: HalfCheetah
@@ -35,3 +37,5 @@ maac_continuous:
   start_steps: 25000       # warmup steps before policy updates begin
   update_every: 100
   num_updates: 1
+  # Subsample per-update loss/grad logging (1 = every update).
+  log_every: 25

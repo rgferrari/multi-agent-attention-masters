@@ -5,11 +5,20 @@ Usage:
     python reports/report.py --env_type mamujoco
     python reports/report.py --env_type lugobots
     python reports/report.py --env_type mpe2 --env simple_spread_v3
+
+    # Compare algorithms fairly when they were trained for different budgets
+    python reports/report.py --env_type mpe2 --common_horizon
+    python reports/report.py --env_type mpe2 --max_episodes 25000
+
+    # Plot the metric that actually selected *_best.pt / drove early stopping
+    python reports/report.py --env_type mpe2 --metric mean_reward_window
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import json
+import subprocess
 from pathlib import Path
 from statistics import NormalDist
 
@@ -28,6 +37,17 @@ AGENT_LABELS: dict[str, str] = {
     'maac_continuous': 'MAAC',
     'maac_adversarial': 'MAAC (adv)',
     'maddpg': 'MADDPG',
+    'mappo': 'MAPPO',
+    'happo': 'HAPPO',
+    'mat': 'MAT',
+}
+
+# The metric training itself uses to select ``*_best.pt`` and drive early
+# stopping. ``episode/mean_reward`` is the raw per-episode value; the windowed
+# tag is the rolling average that actually decided which checkpoint was kept.
+REWARD_TAGS: dict[str, str] = {
+    'mean_reward': 'episode/mean_reward',
+    'mean_reward_window': 'episode/mean_reward_window',
 }
 
 
@@ -66,9 +86,14 @@ def _band(
 
 
 def _load_scalar_series(
-    env_type: str, tag: str, env_filter: str | None
+    env_type: str, tag: str, env_filter: str | None, max_episodes: int | None = None
 ) -> list[tuple[str, str, list[int], list[float]]]:
-    """Return [(model, env, steps, values)] from runs/<env_type>/<env>/<model>/runN/."""
+    """Return [(model, env, steps, values)] from runs/<env_type>/<env>/<model>/runN/.
+
+    ``max_episodes`` truncates every series at that step, so algorithms trained
+    for different budgets are compared over a common horizon rather than one
+    curve's tail being plotted against nothing.
+    """
     root = RUNS_ROOT / env_type
     series = []
     for p in sorted(root.glob('*/*/run*/events.out.tfevents.*')):
@@ -88,10 +113,30 @@ def _load_scalar_series(
         if tag not in ea.Tags().get('scalars', []):
             continue
         vals = ea.Scalars(tag)
+        if max_episodes is not None:
+            vals = [v for v in vals if v.step <= max_episodes]
         if not vals:
             continue
         series.append((model, env, [v.step for v in vals], [v.value for v in vals]))
     return series
+
+
+def common_horizon(env_type: str, tag: str, env_filter: str | None) -> int | None:
+    """Shortest final step across runs — the largest fair comparison horizon.
+
+    Computed per environment and then minimised, so one environment having only
+    short runs does not silently truncate every other environment's curves.
+    """
+    series = _load_scalar_series(env_type, tag, env_filter)
+    if not series:
+        return None
+    per_env: dict[str, list[int]] = {}
+    for _, env, steps, _ in series:
+        if steps:
+            per_env.setdefault(env, []).append(steps[-1])
+    if not per_env:
+        return None
+    return min(min(ends) for ends in per_env.values())
 
 
 def _single_env_axes(fig: plt.Figure) -> plt.Axes:
@@ -100,12 +145,20 @@ def _single_env_axes(fig: plt.Figure) -> plt.Axes:
 
 
 def plot_mean_reward(
-    env_type: str, mode: str, env_filter: str | None, out_dir: Path, window: int = 25
+    env_type: str,
+    mode: str,
+    env_filter: str | None,
+    out_dir: Path,
+    window: int = 25,
+    metric: str = 'mean_reward',
+    max_episodes: int | None = None,
 ) -> Path:
     assert mode in {'std', 'ci'}
-    series = _load_scalar_series(env_type, 'episode/mean_reward', env_filter)
+    tag = REWARD_TAGS[metric]
+    series = _load_scalar_series(env_type, tag, env_filter, max_episodes)
     if not series:
-        raise RuntimeError(f'No mean_reward scalars found under runs/{env_type}')
+        raise RuntimeError(f'No {tag} scalars found under runs/{env_type}')
+    ylabel = 'Mean reward' if metric == 'mean_reward' else 'Mean reward (rolling window)'
 
     if env_filter:
         fig, ax = plt.subplots(figsize=(6, 3.2))
@@ -117,7 +170,7 @@ def plot_mean_reward(
             ax.fill_between(steps, lower, upper, alpha=0.18)
         ax.set_title(env_filter, fontsize=10)
         ax.set_xlabel('Episode', fontsize=9)
-        ax.set_ylabel('Mean reward', fontsize=9)
+        ax.set_ylabel(ylabel, fontsize=9)
         ax.grid(True, alpha=0.25)
         ax.tick_params(labelsize=8)
         ax.legend(fontsize=8, frameon=False)
@@ -145,14 +198,18 @@ def plot_mean_reward(
             ax.grid(True, alpha=0.25)
             ax.tick_params(labelsize=8)
             ax.legend(fontsize=6.5, ncol=1, frameon=False)
-        axes[0].set_ylabel('Mean reward', fontsize=9)
+        axes[0].set_ylabel(ylabel, fontsize=9)
         if y_min is not None and y_max is not None:
             pad = max(1e-9, 0.05 * (y_max - y_min if y_max > y_min else 1.0))
             for ax in axes:
                 ax.set_ylim(y_min - pad, y_max + pad)
         fig.tight_layout()
 
-    stem = f'mean_reward_{mode}'
+    # Distinct stems so the two reward metrics (and truncated variants) do not
+    # overwrite one another in the same output dir.
+    stem = f'{metric}_{mode}'
+    if max_episodes is not None:
+        stem += f'_ep{max_episodes}'
     out = out_dir / f'{stem}.pdf'
     fig.savefig(out, bbox_inches='tight')
     fig.savefig(out.with_suffix('.png'), bbox_inches='tight')
@@ -160,8 +217,10 @@ def plot_mean_reward(
     return out
 
 
-def plot_episode_length(env_type: str, env_filter: str | None, out_dir: Path) -> Path:
-    series = _load_scalar_series(env_type, 'episode/length', env_filter)
+def plot_episode_length(
+    env_type: str, env_filter: str | None, out_dir: Path, max_episodes: int | None = None
+) -> Path:
+    series = _load_scalar_series(env_type, 'episode/length', env_filter, max_episodes)
     if not series:
         raise RuntimeError(f'No episode/length scalars found under runs/{env_type}')
 
@@ -194,7 +253,8 @@ def plot_episode_length(env_type: str, env_filter: str | None, out_dir: Path) ->
         axes[0].set_ylabel('Episode length', fontsize=9)
         fig.tight_layout()
 
-    out = out_dir / 'episode_length.pdf'
+    stem = 'episode_length' + (f'_ep{max_episodes}' if max_episodes is not None else '')
+    out = out_dir / f'{stem}.pdf'
     fig.savefig(out, bbox_inches='tight')
     fig.savefig(out.with_suffix('.png'), bbox_inches='tight')
     plt.close(fig)
@@ -279,10 +339,136 @@ def plot_training_time(
     return csv_path, pdf_path
 
 
+def _episode_length_has_signal(env_type: str, env: str) -> bool:
+    """True if ``episode/length`` varies — i.e. episodes can end early.
+
+    Data-driven rather than keyed on env_type: on MPE2 the length is pinned to
+    ``max_cycles`` (verified constant across all 18 runs) and carries no
+    information, but the same is true of MAMuJoCo HalfCheetah, which cannot
+    fall. Ant *does* vary, and there the length encodes "the robot fell".
+    """
+    for _, _, _, values in _load_scalar_series(env_type, 'episode/length', env):
+        if len(set(values)) > 1:
+            return True
+    return False
+
+
+def _run_metadata(env_type: str, env: str) -> dict:
+    """Summary of the runs backing this report, for thesis traceability."""
+    meta: dict = {'env_type': env_type, 'env': env, 'runs': []}
+    try:
+        meta['git_rev'] = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, timeout=10
+        ).stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        meta['git_rev'] = None
+
+    for tag_key, tag in REWARD_TAGS.items():
+        for model, _, steps, values in _load_scalar_series(env_type, tag, env):
+            if tag_key != 'mean_reward_window':
+                continue
+            meta['runs'].append({
+                'model': model,
+                'episodes': steps[-1] if steps else 0,
+                'final_mean_reward_window': values[-1] if values else None,
+                'best_mean_reward_window': max(values) if values else None,
+            })
+    return meta
+
+
+def generate_run_report(
+    env_type: str,
+    env: str,
+    out_dir: Path | None = None,
+    max_episodes: int | None = None,
+    runs_root: str | Path | None = None,
+) -> list[Path]:
+    """Write the per-environment report figures. Used by the end-of-training hook.
+
+    Emits both reward metrics (``mean_reward`` and the ``mean_reward_window``
+    that actually selected ``*_best.pt``), and includes the episode-length plot
+    only where that series carries signal. Individual failures are swallowed:
+    a report must never fail a finished training run.
+    """
+    out_dir = out_dir or (REPORTS_ROOT / env_type / env)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+
+    # Honour a non-default log_dir (the trainers accept one) so the report
+    # describes the run that just finished rather than whatever is in ./runs.
+    global RUNS_ROOT
+    previous_root = RUNS_ROOT
+    if runs_root is not None:
+        RUNS_ROOT = Path(runs_root)
+    try:
+        return _generate_run_report_inner(env_type, env, out_dir, max_episodes, written)
+    finally:
+        RUNS_ROOT = previous_root
+
+
+def _generate_run_report_inner(
+    env_type: str,
+    env: str,
+    out_dir: Path,
+    max_episodes: int | None,
+    written: list[Path],
+) -> list[Path]:
+    for metric in REWARD_TAGS:
+        for mode in ('std', 'ci'):
+            try:
+                written.append(
+                    plot_mean_reward(env_type, mode, env, out_dir, metric=metric, max_episodes=max_episodes)
+                )
+            except (RuntimeError, ValueError, KeyError) as exc:
+                print(f'  [report] skipped {metric}/{mode}: {exc}')
+
+    if _episode_length_has_signal(env_type, env):
+        try:
+            written.append(plot_episode_length(env_type, env, out_dir, max_episodes=max_episodes))
+        except (RuntimeError, ValueError) as exc:
+            print(f'  [report] skipped episode_length: {exc}')
+
+    try:
+        meta_path = out_dir / 'run_meta.json'
+        meta_path.write_text(json.dumps(_run_metadata(env_type, env), indent=2))
+        written.append(meta_path)
+    except (OSError, ValueError) as exc:
+        print(f'  [report] skipped run_meta.json: {exc}')
+
+    return written
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='Generate training reports')
     parser.add_argument('--env_type', required=True, choices=['mpe2', 'mamujoco', 'lugobots'])
     parser.add_argument('--env', default=None, help='Filter to a single environment')
+    parser.add_argument(
+        '--metric',
+        default='mean_reward',
+        choices=sorted(REWARD_TAGS),
+        help=(
+            'Reward tag to plot. "mean_reward" is the raw per-episode value; '
+            '"mean_reward_window" is the rolling average training used to pick '
+            '*_best.pt and drive early stopping.'
+        ),
+    )
+    parser.add_argument(
+        '--max_episodes',
+        type=int,
+        default=None,
+        help=(
+            'Truncate every curve at this episode, so algorithms trained for '
+            'different budgets are compared over a common horizon.'
+        ),
+    )
+    parser.add_argument(
+        '--common_horizon',
+        action='store_true',
+        help=(
+            'Derive --max_episodes automatically as the shortest run in the '
+            'selection. Ignored if --max_episodes is given explicitly.'
+        ),
+    )
     args = parser.parse_args()
 
     out_dir = REPORTS_ROOT / args.env_type
@@ -290,9 +476,16 @@ def main() -> None:
         out_dir = out_dir / args.env
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(plot_mean_reward(args.env_type, 'std', args.env, out_dir))
-    print(plot_mean_reward(args.env_type, 'ci', args.env, out_dir))
-    print(plot_episode_length(args.env_type, args.env, out_dir))
+    max_episodes = args.max_episodes
+    if max_episodes is None and args.common_horizon:
+        max_episodes = common_horizon(args.env_type, REWARD_TAGS[args.metric], args.env)
+        if max_episodes is None:
+            raise SystemExit(f'No {REWARD_TAGS[args.metric]} scalars found under runs/{args.env_type}')
+        print(f'common horizon: {max_episodes} episodes')
+
+    print(plot_mean_reward(args.env_type, 'std', args.env, out_dir, metric=args.metric, max_episodes=max_episodes))
+    print(plot_mean_reward(args.env_type, 'ci', args.env, out_dir, metric=args.metric, max_episodes=max_episodes))
+    print(plot_episode_length(args.env_type, args.env, out_dir, max_episodes=max_episodes))
     csv_path, pdf_path = plot_training_time(args.env_type, args.env, out_dir)
     print(csv_path)
     print(pdf_path)

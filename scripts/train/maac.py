@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 from agents.maac.attention_sac import AttentionSAC
 from agents.maac.utils.buffer import ReplayBuffer
+from scripts.train.report_hook import maybe_generate_report
 from scripts.train.utils import get_next_shared_run_dirs
 
 
@@ -254,3 +255,5 @@ def train_maac(env, agent: AttentionSAC, device: torch.device, args) -> None:
 
     progress.close()
     writer.close()
+
+    maybe_generate_report(args, log_dir)

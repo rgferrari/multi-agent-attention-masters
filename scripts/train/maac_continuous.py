@@ -12,6 +12,7 @@ from tqdm import tqdm
 from agents.maac_continuous.attention_sac_continuous import AttentionSACContinuous
 from agents.maac.utils.buffer import ReplayBuffer
 from scripts.train.maac import _agent_label, _attention_heatmap_figure
+from scripts.train.report_hook import maybe_generate_report
 from scripts.train.utils import get_next_shared_run_dirs
 
 
@@ -58,7 +59,9 @@ def train_maac_continuous(env, agent: AttentionSACContinuous, device: torch.devi
     except ImportError as exc:
         raise RuntimeError("Missing tensorboard. Install with: pip install tensorboard") from exc
 
-    rel = getattr(args, "run_subpath", None) or os.path.join("maac_continuous", args.env)
+    # Layout matches every other loop (<env_type>/<env>/<algo>); callers override
+    # via args.run_subpath, which is what train_mamujoco_maac.py already does.
+    rel = getattr(args, "run_subpath", None) or os.path.join("mamujoco", args.env, "maac_continuous")
     log_dir, save_dir = get_next_shared_run_dirs(
         os.path.join(args.log_dir, rel),
         os.path.join(args.save_dir, rel),
@@ -208,3 +211,5 @@ def train_maac_continuous(env, agent: AttentionSACContinuous, device: torch.devi
 
     progress.close()
     writer.close()
+
+    maybe_generate_report(args, log_dir)

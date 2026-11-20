@@ -10,6 +10,7 @@ import torch
 from tqdm import tqdm
 
 from agents.maddpg_torch import MADDPG
+from scripts.train.report_hook import maybe_generate_report
 from scripts.train.utils import get_next_shared_run_dirs
 
 
@@ -121,3 +122,5 @@ def train_maddpg(env, maddpg: MADDPG, args) -> None:
 
     progress.close()
     writer.close()
+
+    maybe_generate_report(args, log_dir)

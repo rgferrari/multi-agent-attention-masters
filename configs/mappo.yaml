@@ -18,6 +18,8 @@ common:
   early_stop_metric: mean_reward
   early_stop_mode: max
   train: true
+  # Write this run's report figures when training finishes.
+  auto_report: true
 
 mappo:
   gamma: 0.99

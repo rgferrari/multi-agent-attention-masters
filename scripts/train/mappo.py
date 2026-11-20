@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from agents.mappo import MAPPO
 from agents.mappo.buffer import RolloutBuffer
+from scripts.train.report_hook import maybe_generate_report
 from scripts.train.utils import get_next_shared_run_dirs
 
 
@@ -141,3 +142,5 @@ def train_mappo(env, mappo: MAPPO, args) -> None:
 
     progress.close()
     writer.close()
+
+    maybe_generate_report(args, log_dir)
