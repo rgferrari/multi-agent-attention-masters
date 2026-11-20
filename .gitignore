@@ -3,8 +3,11 @@
 /runs
 **/__pycache__
 
-# MAPPO reference implementation (cloned for porting, not vendored)
+# Reference implementations (cloned for porting, not vendored). Nothing imports
+# them; the upstream URL + pinned commit for each is recorded in agents/CLAUDE.md
+# so they can be re-cloned for consultation.
 /agents/on-policy
+/agents/Multi-Agent-Transformer
 
 # Personal/local Claude Code settings, not shared
 /.claude/settings.local.json

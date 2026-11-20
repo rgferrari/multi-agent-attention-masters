@@ -41,11 +41,19 @@ class RolloutBuffer:
         self.mask_buf = np.zeros((max_steps, num_agents), dtype=np.float32)  # 1 - terminated
         self.ret_buf = np.zeros((max_steps, num_agents), dtype=np.float32)
         self.adv_buf = np.zeros((max_steps, num_agents), dtype=np.float32)
+        # HAPPO's sequential-update factor. Stays 1.0 for MAPPO, which updates
+        # every agent against the same (pre-update) teammate behaviour.
+        self.factor_buf = np.ones(max_steps, dtype=np.float32)
 
         self.step = 0
 
     def reset(self) -> None:
         self.step = 0
+        self.factor_buf[:] = 1.0
+
+    def set_factor(self, factor: np.ndarray) -> None:
+        """Set the per-step HAPPO factor (see ``agents/happo/happo.py``)."""
+        self.factor_buf[: len(factor)] = factor
 
     def insert(
         self,
@@ -108,6 +116,7 @@ class RolloutBuffer:
                 "returns": torch.as_tensor(self.ret_buf[mb, agent_i], device=self.device),
                 "advantages": torch.as_tensor(adv[mb], device=self.device),
                 "values": torch.as_tensor(self.val_buf[mb, agent_i], device=self.device),
+                "factor": torch.as_tensor(self.factor_buf[:T][mb], device=self.device),
             }
 
     def __len__(self) -> int:

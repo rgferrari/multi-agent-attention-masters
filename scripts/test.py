@@ -20,7 +20,9 @@ if REPO_ROOT not in sys.path:
 from agents.maac.attention_sac import AttentionSAC
 from agents.maddpg_torch import MADDPG
 from agents.maddpg_torch.maddpg import MADDPGConfig
+from agents.happo import HAPPO, HAPPOConfig
 from agents.mappo import MAPPO, MAPPOConfig
+from agents.mat import MAT, MATConfig
 from config import load_config
 
 
@@ -91,6 +93,12 @@ def _make_args(agent: str, cfg: Dict[str, object]) -> argparse.Namespace:
         "hidden_dim": 64,
         "use_clipped_value_loss": True,
     }
+    mat_defaults = {
+        "gamma": 0.99, "gae_lambda": 0.95, "clip_param": 0.2, "ppo_epoch": 15,
+        "num_mini_batch": 1, "entropy_coef": 0.01, "value_loss_coef": 1.0,
+        "max_grad_norm": 10.0, "lr": 5e-4, "n_block": 1, "n_embd": 64,
+        "n_head": 1, "use_clipped_value_loss": True,
+    }
 
     common = _with_defaults(cfg.get("common"), common_defaults)
 
@@ -101,6 +109,14 @@ def _make_args(agent: str, cfg: Dict[str, object]) -> argparse.Namespace:
     if agent == "mappo":
         mappo_cfg = _with_defaults(cfg.get("mappo"), mappo_defaults)
         merged = {**common, **mappo_cfg}
+        return SimpleNamespace(**merged)
+    if agent == "happo":
+        happo_cfg = _with_defaults(cfg.get("happo"), mappo_defaults)
+        merged = {**common, **happo_cfg}
+        return SimpleNamespace(**merged)
+    if agent == "mat":
+        mat_cfg = _with_defaults(cfg.get("mat"), mat_defaults)
+        merged = {**common, **mat_cfg}
         return SimpleNamespace(**merged)
     if agent == "maac":
         maac_cfg = _with_defaults(cfg.get("maac"), maac_defaults)
@@ -130,6 +146,43 @@ def _build_maddpg(env, device: torch.device, args: argparse.Namespace) -> MADDPG
         epsilon=args.epsilon,
     )
     return MADDPG(agent_ids, obs_spaces, act_spaces, device=device, config=cfg)
+
+
+def _build_happo(env, device: torch.device, args: argparse.Namespace) -> HAPPO:
+    agent_ids = list(getattr(env, "agents", env.possible_agents))
+    obs_spaces = [env.observation_space(a) for a in agent_ids]
+    act_spaces = [env.action_space(a) for a in agent_ids]
+    cfg = HAPPOConfig(
+        gamma=args.gamma, gae_lambda=args.gae_lambda, clip_param=args.clip_param,
+        ppo_epoch=args.ppo_epoch, num_mini_batch=args.num_mini_batch,
+        entropy_coef=args.entropy_coef, value_loss_coef=args.value_loss_coef,
+        max_grad_norm=args.max_grad_norm, actor_lr=args.actor_lr,
+        critic_lr=args.critic_lr, hidden_dim=args.hidden_dim,
+        use_clipped_value_loss=args.use_clipped_value_loss,
+    )
+    return HAPPO(agent_ids, obs_spaces, act_spaces, device=device, config=cfg)
+
+
+def _build_mat(env, device: torch.device, args: argparse.Namespace) -> MAT:
+    agent_ids = list(getattr(env, "agents", env.possible_agents))
+    obs_spaces = [env.observation_space(a) for a in agent_ids]
+    act_spaces = [env.action_space(a) for a in agent_ids]
+    cfg = MATConfig(
+        gamma=args.gamma,
+        gae_lambda=args.gae_lambda,
+        clip_param=args.clip_param,
+        ppo_epoch=args.ppo_epoch,
+        num_mini_batch=args.num_mini_batch,
+        entropy_coef=args.entropy_coef,
+        value_loss_coef=args.value_loss_coef,
+        max_grad_norm=args.max_grad_norm,
+        lr=args.lr,
+        n_block=args.n_block,
+        n_embd=args.n_embd,
+        n_head=args.n_head,
+        use_clipped_value_loss=args.use_clipped_value_loss,
+    )
+    return MAT(agent_ids, obs_spaces, act_spaces, device=device, config=cfg)
 
 
 def _build_mappo(env, device: torch.device, args: argparse.Namespace) -> MAPPO:
@@ -162,7 +215,7 @@ def _maac_actions(agent: AttentionSAC, obs: Dict[str, torch.Tensor], device: tor
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--agent", required=True, choices=["maac", "maddpg", "mappo"], help="Agent type")
+    parser.add_argument("--agent", required=True, choices=["maac", "maddpg", "mappo", "happo", "mat"], help="Agent type")
     parser.add_argument("--config", required=True, help="Path to YAML config")
     parser.add_argument("--override", action="append", default=[], help="Override config key=value (dot paths)")
     parser.add_argument("--checkpoint", required=True, help="Checkpoint path")
@@ -205,8 +258,8 @@ def main() -> None:
                 steps += 1
             mean_ep = sum(ep_rewards.values()) / max(1, len(ep_rewards))
             print(f"Episode {ep + 1}: mean_reward={mean_ep:.4f}")
-    elif args.agent == "mappo":
-        model = _build_mappo(env, device, run_args)
+    elif args.agent in ("mappo", "happo", "mat"):
+        model = {"mappo": _build_mappo, "happo": _build_happo, "mat": _build_mat}[args.agent](env, device, run_args)
         state = torch.load(args.checkpoint, map_location=device)
         model.load_state_dict(state)
         for ep in range(run_args.episodes):

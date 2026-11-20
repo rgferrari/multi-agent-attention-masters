@@ -14,11 +14,15 @@ import torch
 from agents.maac.attention_sac import AttentionSAC
 from agents.maddpg_torch import MADDPG
 from agents.maddpg_torch.maddpg import MADDPGConfig
+from agents.happo import HAPPO, HAPPOConfig
 from agents.mappo import MAPPO, MAPPOConfig
+from agents.mat import MAT, MATConfig
 from config import load_config
 from scripts.train.maac import train_maac
 from scripts.train.maddpg import train_maddpg
+from scripts.train.happo import train_happo
 from scripts.train.mappo import train_mappo
+from scripts.train.mat import train_mat
 
 
 def _warn_if_no_display(render_mode: str) -> None:
@@ -59,6 +63,7 @@ def _build_maac(env, args: argparse.Namespace) -> AttentionSAC:
         "pol_hidden_dim": args.maac_pol_hidden_dim,
         "critic_hidden_dim": args.maac_critic_hidden_dim,
         "attend_heads": args.maac_attend_heads,
+        "attend_mag_reg": args.maac_attend_mag_reg,
         "agent_init_params": agent_init_params,
         "sa_size": sa_size,
     }
@@ -74,6 +79,8 @@ def _build_maac(env, args: argparse.Namespace) -> AttentionSAC:
         pol_hidden_dim=args.maac_pol_hidden_dim,
         critic_hidden_dim=args.maac_critic_hidden_dim,
         attend_heads=args.maac_attend_heads,
+        attend_mag_reg=args.maac_attend_mag_reg,
+        log_every=getattr(args, "maac_log_every", 25),
     )
     model.init_dict = init_dict
     return model
@@ -133,6 +140,49 @@ def _build_mappo(env, device: torch.device, args: argparse.Namespace) -> MAPPO:
     return MAPPO(agent_ids, obs_spaces, act_spaces, device=device, config=cfg)
 
 
+def _build_happo(env, device: torch.device, args: argparse.Namespace) -> HAPPO:
+    agent_ids = list(env.agents)
+    obs_spaces = [env.observation_space(a) for a in agent_ids]
+    act_spaces = [env.action_space(a) for a in agent_ids]
+    cfg = HAPPOConfig(
+        gamma=args.gamma,
+        gae_lambda=args.gae_lambda,
+        clip_param=args.clip_param,
+        ppo_epoch=args.ppo_epoch,
+        num_mini_batch=args.num_mini_batch,
+        entropy_coef=args.entropy_coef,
+        value_loss_coef=args.value_loss_coef,
+        max_grad_norm=args.max_grad_norm,
+        actor_lr=args.actor_lr,
+        critic_lr=args.critic_lr,
+        hidden_dim=args.hidden_dim,
+        use_clipped_value_loss=args.use_clipped_value_loss,
+    )
+    return HAPPO(agent_ids, obs_spaces, act_spaces, device=device, config=cfg)
+
+
+def _build_mat(env, device: torch.device, args: argparse.Namespace) -> MAT:
+    agent_ids = list(env.agents)
+    obs_spaces = [env.observation_space(a) for a in agent_ids]
+    act_spaces = [env.action_space(a) for a in agent_ids]
+    cfg = MATConfig(
+        gamma=args.gamma,
+        gae_lambda=args.gae_lambda,
+        clip_param=args.clip_param,
+        ppo_epoch=args.ppo_epoch,
+        num_mini_batch=args.num_mini_batch,
+        entropy_coef=args.entropy_coef,
+        value_loss_coef=args.value_loss_coef,
+        max_grad_norm=args.max_grad_norm,
+        lr=args.lr,
+        n_block=args.n_block,
+        n_embd=args.n_embd,
+        n_head=args.n_head,
+        use_clipped_value_loss=args.use_clipped_value_loss,
+    )
+    return MAT(agent_ids, obs_spaces, act_spaces, device=device, config=cfg)
+
+
 def _with_defaults(user_cfg: Dict[str, object] | None, defaults: Dict[str, object]) -> Dict[str, object]:
     merged = defaults.copy()
     if user_cfg:
@@ -159,6 +209,17 @@ def _make_args(agent: str, cfg: Dict[str, object], cli_train: bool) -> argparse.
         "early_stop_metric": "mean_reward",
         "early_stop_mode": "max",
         "train": False,
+        # Generate this run's report figures after training finishes. Off by
+        # default so existing invocations and train_all.sh are unchanged.
+        "auto_report": False,
+        # How often MAAC writes attention heatmap figures (episodes). Only read
+        # by the MAAC loops; harmless for the other algorithms.
+        "attn_heatmap_every": 500,
+        # Periodic deterministic evaluation (episodes; 0 disables). This is the
+        # quantity the MAT/MAPPO papers report, as opposed to training-rollout
+        # reward which includes exploration.
+        "eval_interval": 0,
+        "eval_episodes": 5,
     }
     maddpg_defaults = {
         "gamma": 0.95,
@@ -189,6 +250,8 @@ def _make_args(agent: str, cfg: Dict[str, object], cli_train: bool) -> argparse.
         "critic_hidden_dim": 128,
         "attend_heads": 4,
         "attend_mag_reg": 1e-3,
+        # Subsample the per-update loss/grad logging (see AttentionSAC.log_every).
+        "log_every": 25,
     }
     mappo_defaults = {
         "gamma": 0.99,
@@ -205,6 +268,24 @@ def _make_args(agent: str, cfg: Dict[str, object], cli_train: bool) -> argparse.
         "use_clipped_value_loss": True,
     }
 
+    happo_defaults = dict(mappo_defaults)
+
+    mat_defaults = {
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "clip_param": 0.2,
+        "ppo_epoch": 15,
+        "num_mini_batch": 1,
+        "entropy_coef": 0.01,
+        "value_loss_coef": 1.0,
+        "max_grad_norm": 10.0,
+        "lr": 5e-4,
+        "n_block": 1,
+        "n_embd": 64,
+        "n_head": 1,
+        "use_clipped_value_loss": True,
+    }
+
     common = _with_defaults(cfg.get("common"), common_defaults)
     common["train"] = bool(cli_train or common.get("train"))
 
@@ -216,6 +297,14 @@ def _make_args(agent: str, cfg: Dict[str, object], cli_train: bool) -> argparse.
         mappo_cfg = _with_defaults(cfg.get("mappo"), mappo_defaults)
         merged = {**common, **mappo_cfg}
         return SimpleNamespace(**merged)
+    if agent == "happo":
+        happo_cfg = _with_defaults(cfg.get("happo"), happo_defaults)
+        merged = {**common, **happo_cfg}
+        return SimpleNamespace(**merged)
+    if agent == "mat":
+        mat_cfg = _with_defaults(cfg.get("mat"), mat_defaults)
+        merged = {**common, **mat_cfg}
+        return SimpleNamespace(**merged)
     if agent == "maac":
         maac_cfg = _with_defaults(cfg.get("maac"), maac_defaults)
         merged = {**common, **{f"maac_{k}": v for k, v in maac_cfg.items()}}
@@ -226,7 +315,7 @@ def _make_args(agent: str, cfg: Dict[str, object], cli_train: bool) -> argparse.
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--agent", required=True, choices=["maac", "maddpg", "mappo", "random"], help="Agent type")
+    parser.add_argument("--agent", required=True, choices=["maac", "maddpg", "mappo", "happo", "mat", "random"], help="Agent type")
     parser.add_argument("--config", required=True, help="Path to YAML config")
     parser.add_argument("--override", nargs='+', action="append", default=[], help="Override config key=value (dot paths)")
     parser.add_argument("--train", action="store_true", help="Force training mode")
@@ -248,6 +337,8 @@ def main() -> None:
     agent = None
     maddpg = None
     mappo = None
+    happo = None
+    mat = None
     if args.agent == "maac":
         env.reset(seed=run_args.seed)
         agent = _build_maac(env, run_args)
@@ -258,6 +349,12 @@ def main() -> None:
     elif args.agent == "mappo":
         env.reset(seed=run_args.seed)
         mappo = _build_mappo(env, device, run_args)
+    elif args.agent == "happo":
+        env.reset(seed=run_args.seed)
+        happo = _build_happo(env, device, run_args)
+    elif args.agent == "mat":
+        env.reset(seed=run_args.seed)
+        mat = _build_mat(env, device, run_args)
 
     if run_args.train and args.agent == "maac" and agent is not None:
         train_maac(env, agent, device, run_args)
@@ -269,6 +366,14 @@ def main() -> None:
         return
     if run_args.train and args.agent == "mappo" and mappo is not None:
         train_mappo(env, mappo, run_args)
+        env.close()
+        return
+    if run_args.train and args.agent == "happo" and happo is not None:
+        train_happo(env, happo, run_args)
+        env.close()
+        return
+    if run_args.train and args.agent == "mat" and mat is not None:
+        train_mat(env, mat, run_args)
         env.close()
         return
 
@@ -285,6 +390,10 @@ def main() -> None:
                 actions, actions_onehot = maddpg.select_actions(obs, explore=False)
             elif args.agent == "mappo" and mappo is not None:
                 actions, _, _, _ = mappo.select_actions(obs, deterministic=True)
+            elif args.agent == "happo" and happo is not None:
+                actions, _, _, _ = happo.select_actions(obs, deterministic=True)
+            elif args.agent == "mat" and mat is not None:
+                actions, _, _, _ = mat.select_actions(obs, deterministic=True)
             else:
                 actions = _random_actions(env, agent_ids)
             obs, rewards, terminations, truncations, infos = env.step(actions)

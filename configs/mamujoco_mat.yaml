@@ -1,0 +1,77 @@
+# MAT on MAMuJoCo, configured to reproduce the MAT paper's Multi-Agent MuJoCo
+# setting as closely as this repo's single-env training loop allows.
+#
+# Hyperparameters below are taken verbatim from the reference repo's
+# mat/scripts/train_mujoco.sh (lr/critic_lr 5e-5, entropy_coef 0.001,
+# max_grad_norm 0.5, clip_param 0.05, ppo_epoch 10) plus config.py defaults
+# (gamma 0.99, gae_lambda 0.95, n_block 1, n_embd 64, n_head 1).
+#
+# Where this necessarily differs from the paper -- state these if the numbers
+# are compared against published results:
+#   * Single-env rollouts, not the paper's 40 vectorized threads. Each PPO
+#     update therefore sees one episode's steps rather than 40 in parallel,
+#     which is a much smaller batch. num_mini_batch is 1 here, not 40, for the
+#     same reason (40 minibatches over one episode would be ~2 steps each).
+#   * episode_length 100 in the paper is the rollout length per thread, and is
+#     multiplied by its 40 threads; max_cycles: 1000 here approximates that
+#     effective batch far better than 100 would.
+#   * Per-agent independent networks vs. upstream's parameter sharing is NOT a
+#     difference for MAT -- MAT is a single shared model by construction.
+#   * Training-rollout reward is logged, whereas the paper reports
+#     eval_average_episode_rewards from separate deterministic episodes. Use
+#     eval_interval/eval_episodes below to log the comparable quantity.
+
+common:
+  env: ma_halfcheetah_6x1
+  # 10M env steps / 1000 steps per episode = 10k episodes to match the paper's
+  # budget. Lower this for a quicker sanity check.
+  episodes: 10000
+  # MAT is on-policy with one PPO update per episode, so max_cycles IS the PPO
+  # batch size. 1000 is MAMuJoCo's native episode horizon and matches the other
+  # MAMuJoCo configs. Do NOT set this to the reference's episode_length of 100:
+  # upstream multiplies that by n_rollout_threads=40 for an effective ~4000-step
+  # batch, whereas single-env training would get a 100-step batch. Measured on
+  # HalfCheetah 6x1: 100 plateaus at ~64 eval reward, 1000 reaches ~710
+  # (RESEARCH_LOG.md 2026-08-17).
+  max_cycles: 1000
+  seed: 0
+  use_gpu: true
+  run_name: null
+  log_dir: runs
+  save_dir: checkpoints
+  save_every: 0
+  save_final: true
+  early_stop_patience: 0
+  early_stop_min_delta: 0.01
+  early_stop_start_episode: 100
+  early_stop_window: 10
+  early_stop_metric: mean_reward
+  early_stop_mode: max
+  train: true
+  # Write this run's report figures when training finishes.
+  auto_report: true
+  # Periodic deterministic evaluation -- this is the quantity the MAT paper
+  # reports (eval_average_episode_rewards). 0 disables it.
+  eval_interval: 250
+  eval_episodes: 5
+
+mamujoco:
+  # The MAT paper's Multi-Agent MuJoCo scenario.
+  scenario: HalfCheetah
+  agent_conf: 6x1
+  agent_obsk: 0
+
+mat:
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_param: 0.05
+  ppo_epoch: 10
+  num_mini_batch: 1
+  entropy_coef: 0.001
+  value_loss_coef: 1.0
+  max_grad_norm: 0.5
+  lr: 0.00005
+  n_block: 1
+  n_embd: 64
+  n_head: 1
+  use_clipped_value_loss: true
