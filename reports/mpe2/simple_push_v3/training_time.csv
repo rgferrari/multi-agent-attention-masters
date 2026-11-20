@@ -1,0 +1,4 @@
+env,model,minutes
+simple_push_v3,maac,41.203958
+simple_push_v3,maddpg,30.401154
+simple_push_v3,mappo,36.403556

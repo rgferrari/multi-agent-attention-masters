@@ -1,0 +1,19 @@
+{
+  "env_type": "mamujoco",
+  "env": "ma_halfcheetah_6x1",
+  "runs": [
+    {
+      "model": "mat",
+      "episodes": 21456,
+      "final_mean_reward_window": 62.36892318725586,
+      "best_mean_reward_window": 113.26258850097656
+    },
+    {
+      "model": "mat",
+      "episodes": 1139,
+      "final_mean_reward_window": 270.0416259765625,
+      "best_mean_reward_window": 271.873291015625
+    }
+  ],
+  "git_rev": "582cb67a067b87e515be310bfe5e268878501fa8"
+}

@@ -1,0 +1,49 @@
+{
+  "env_type": "mpe2",
+  "env": "simple_speaker_listener_v4",
+  "runs": [
+    {
+      "model": "happo",
+      "episodes": 24999,
+      "final_mean_reward_window": -14.583869934082031,
+      "best_mean_reward_window": -5.562051773071289
+    },
+    {
+      "model": "maac",
+      "episodes": 59999,
+      "final_mean_reward_window": -13.860452651977539,
+      "best_mean_reward_window": -3.1989786624908447
+    },
+    {
+      "model": "maac",
+      "episodes": 59999,
+      "final_mean_reward_window": -13.068877220153809,
+      "best_mean_reward_window": -3.763798713684082
+    },
+    {
+      "model": "maddpg",
+      "episodes": 59999,
+      "final_mean_reward_window": -22.555267333984375,
+      "best_mean_reward_window": -5.236136436462402
+    },
+    {
+      "model": "maddpg",
+      "episodes": 59999,
+      "final_mean_reward_window": -21.996374130249023,
+      "best_mean_reward_window": -5.826477527618408
+    },
+    {
+      "model": "mappo",
+      "episodes": 24999,
+      "final_mean_reward_window": -14.308631896972656,
+      "best_mean_reward_window": -4.773601531982422
+    },
+    {
+      "model": "mat",
+      "episodes": 24999,
+      "final_mean_reward_window": -34.46928405761719,
+      "best_mean_reward_window": -8.396268844604492
+    }
+  ],
+  "git_rev": "582cb67a067b87e515be310bfe5e268878501fa8"
+}

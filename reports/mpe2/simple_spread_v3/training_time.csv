@@ -1,0 +1,4 @@
+env,model,minutes
+simple_spread_v3,maac,141.169353
+simple_spread_v3,maddpg,47.579482
+simple_spread_v3,mappo,57.204458

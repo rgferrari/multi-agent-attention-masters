@@ -1,0 +1,49 @@
+{
+  "env_type": "mpe2",
+  "env": "simple_spread_v3",
+  "runs": [
+    {
+      "model": "happo",
+      "episodes": 24999,
+      "final_mean_reward_window": -20.25103759765625,
+      "best_mean_reward_window": -15.396958351135254
+    },
+    {
+      "model": "maac",
+      "episodes": 59999,
+      "final_mean_reward_window": -13.94067668914795,
+      "best_mean_reward_window": -8.073446273803711
+    },
+    {
+      "model": "maac",
+      "episodes": 59999,
+      "final_mean_reward_window": -12.819865226745605,
+      "best_mean_reward_window": -8.479689598083496
+    },
+    {
+      "model": "maddpg",
+      "episodes": 59999,
+      "final_mean_reward_window": -26.353626251220703,
+      "best_mean_reward_window": -17.25911521911621
+    },
+    {
+      "model": "maddpg",
+      "episodes": 59999,
+      "final_mean_reward_window": -18.12405014038086,
+      "best_mean_reward_window": -11.818026542663574
+    },
+    {
+      "model": "mappo",
+      "episodes": 24999,
+      "final_mean_reward_window": -19.539716720581055,
+      "best_mean_reward_window": -15.441110610961914
+    },
+    {
+      "model": "mat",
+      "episodes": 24999,
+      "final_mean_reward_window": -22.87580680847168,
+      "best_mean_reward_window": -16.07802391052246
+    }
+  ],
+  "git_rev": "582cb67a067b87e515be310bfe5e268878501fa8"
+}

@@ -112,3 +112,32 @@ Verified: factor starts at 1.0 (so the first agent in the order faces exactly MA
 **Purpose:** *(user asked for it after learning what HAPPO is from the MAT paper's baseline table)* HAPPO completes an ablation the thesis did not previously have. HAPPO and MAT rest on the **same** multi-agent advantage decomposition theorem but apply it in opposite places — HAPPO sequentialises the *optimisation procedure*, MAT sequentialises the *architecture* — while MAPPO applies it nowhere. With all three sharing this repo's conventions (per-agent networks where applicable, same buffer, same training loop template, same metrics), the comparison isolates one idea instead of contrasting unrelated algorithms.
 
 Relevant context for interpreting results: in the MAT paper's own HalfCheetah table, MAT (~5631) and HAPPO (~5646) are effectively tied while MAPPO trails badly (~3304) — i.e. published evidence suggests the *theorem*, not the transformer, carries most of the benefit. If that reproduces here, the honest framing of MAT's advantage is scalability (one decoder pass vs. N sequential updates), not raw performance.
+
+---
+
+## 2026-08-18 — Five-algorithm MPE2 comparison at 25k episodes
+
+**Change:** Trained MAT and HAPPO on all six MPE2 environments for 25,000 episodes each (12 runs via `train_all.sh` with `AGENTS="mat happo"`), completing the five-algorithm comparison. Figures in `reports/mpe2/` (`mean_reward_window_*_ep25000`).
+
+Best `episode/mean_reward_window` at 25k episodes, one seed per configuration:
+
+| Environment | MAAC | MADDPG | MAPPO | HAPPO | MAT |
+|---|---|---|---|---|---|
+| simple_adversary_v3 | 12.31 | 9.59 | **15.48** | 2.92 | 8.50 |
+| simple_crypto_v3 | 14.00 | 9.27 | **16.67** | 15.47 | 10.67 |
+| simple_push_v3 | **-2.77** | -4.16 | -3.26 | -3.44 | -3.48 |
+| simple_speaker_listener_v4 | **-3.26** | -6.03 | -4.77 | -5.56 | -8.40 |
+| simple_spread_v3 | **-8.41** | -13.99 | -15.44 | -14.80 | -15.61 |
+| simple_tag_v3 | **13.84** | 12.84 | 12.68 | 10.47 | 12.43 |
+
+MAAC wins 4, MAPPO wins 2, **MAT and HAPPO win none**.
+
+**Purpose / interpretation:** this contradicts what the literature predicted. MAT and HAPPO both apply the multi-agent advantage decomposition theorem (in the architecture and in the optimisation procedure respectively); MAPPO applies it nowhere. In the MAT paper's own MAMuJoCo table, MAT (~5631) and HAPPO (~5646) tie ahead of MAPPO (~3304). Here the two theorem-based methods land *behind* plain MAPPO on every environment.
+
+Two candidate explanations, deliberately not yet decided between:
+1. **Horizon.** Published results are on SMAC/MAMuJoCo with 100–1000-step episodes; MPE2 uses `max_cycles: 25`. The monotonic-improvement guarantee may simply not pay off over such short horizons — and MAT's autoregressive decoder and HAPPO's sequential factor both add per-update cost that a 25-step episode cannot amortise.
+2. **Budget/tuning.** Both were run with MAPPO's hyperparameters (deliberately, for comparability) rather than their own published ones, at 625k env steps versus the papers' 10–20M.
+
+**Caveats that must accompany any use of this table:** single seed per configuration, so the small gaps (e.g. push: -3.26 / -3.44 / -3.48) are within seed noise and must not be ranked. Only MAAC on `simple_spread_v3` (-8.41 vs -14 to -15.6) and the HAPPO `simple_adversary_v3` outlier are large enough to survive that objection. **The HAPPO adversary result (2.92 vs MAPPO's 15.48, when HAPPO is MAPPO plus one factor term) is anomalous and should be verified before publication** — plausibly the sequential factor destabilising when agents have opposing incentives, but unverified.
+
+**Tooling note:** `reports/report.py --common_horizon` truncated to 19,539 episodes because a single early-stopped run (`maac/simple_adversary_v3/run2`) dominates the global minimum, discarding ~22% of the other 11 runs' data. Use `--max_episodes 25000` for this comparison. The `common_horizon` heuristic is conservative by design (it takes the per-env minimum, then the global minimum); reconsider if early-stopped runs become common.
