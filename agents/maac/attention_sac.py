@@ -18,6 +18,7 @@ class AttentionSAC(object):
                  pol_hidden_dim=128,
                  critic_hidden_dim=128, attend_heads=4,
                  attend_mag_reg=1e-3,
+                 log_every=25,
                  **kwargs):
         """
         Inputs:
@@ -55,6 +56,11 @@ class AttentionSAC(object):
         self.q_lr = q_lr
         self.reward_scale = reward_scale
         self.attend_mag_reg = attend_mag_reg
+        # Updates run ~25x per episode, so logging every update writes ~25x more
+        # events than the per-episode scalars and dominates the event file.
+        # These curves are only ever read smoothed, so subsampling loses nothing
+        # in practice. Set to 1 for fine-grained debugging of a short run.
+        self.log_every = max(1, int(log_every))
         self.pol_dev = 'cpu'  # device for policies
         self.critic_dev = 'cpu'  # device for critics
         self.trgt_pol_dev = 'cpu'  # device for target policies
@@ -95,9 +101,11 @@ class AttentionSAC(object):
         trgt_critic_in = list(zip(next_obs, next_acs))
         critic_in = list(zip(obs, acs))
         next_qs = self.target_critic(trgt_critic_in)
+        _should_log = logger is not None and self.niter % self.log_every == 0
         critic_rets = self.critic(critic_in, regularize=True,
                                   attend_mag_reg=self.attend_mag_reg,
-                                  logger=logger, niter=self.niter)
+                                  logger=logger if _should_log else None,
+                                  niter=self.niter)
         q_loss = 0
         for a_i, nq, log_pi, (pq, regs) in zip(range(self.nagents), next_qs,
                                                next_log_pis, critic_rets):
@@ -116,7 +124,7 @@ class AttentionSAC(object):
         self.critic_optimizer.step()
         self.critic_optimizer.zero_grad()
 
-        if logger is not None:
+        if _should_log:
             logger.add_scalar('losses/q_loss', q_loss, self.niter)
             logger.add_scalar('grad_norms/q', grad_norm, self.niter)
         self.niter += 1
@@ -132,7 +140,7 @@ class AttentionSAC(object):
             curr_ac, probs, log_pi, pol_regs, ent = pi(
                 ob, return_all_probs=True, return_log_pi=True,
                 regularize=True, return_entropy=True)
-            if logger is not None:
+            if logger is not None and self.niter % self.log_every == 0:
                 logger.add_scalar('agent%i/policy_entropy' % a_i, ent,
                                   self.niter)
             samp_acs.append(curr_ac)
@@ -164,7 +172,7 @@ class AttentionSAC(object):
             curr_agent.policy_optimizer.step()
             curr_agent.policy_optimizer.zero_grad()
 
-            if logger is not None:
+            if logger is not None and self.niter % self.log_every == 0:
                 logger.add_scalar('agent%i/losses/pol_loss' % a_i,
                                   pol_loss, self.niter)
                 logger.add_scalar('agent%i/grad_norms/pi' % a_i,

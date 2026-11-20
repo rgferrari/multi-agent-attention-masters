@@ -28,7 +28,7 @@ class AttentionSACContinuous:
     def __init__(self, agent_init_params, sa_size,
                  gamma=0.95, tau=0.01, pi_lr=0.01, q_lr=0.01,
                  reward_scale=10.0, pol_hidden_dim=128, critic_hidden_dim=128,
-                 attend_heads=4, **kwargs):
+                 attend_heads=4, log_every=25, **kwargs):
         self.nagents = len(sa_size)
         self.gamma = gamma
         self.tau = tau
@@ -54,6 +54,9 @@ class AttentionSACContinuous:
         self.trgt_pol_dev = "cpu"
         self.trgt_critic_dev = "cpu"
         self.niter = 0
+        # See AttentionSAC.log_every: updates run many times per episode, so
+        # logging every one dominates the event file. Set to 1 to debug.
+        self.log_every = max(1, int(log_every))
 
     @property
     def policies(self):
@@ -77,8 +80,10 @@ class AttentionSACContinuous:
                 next_log_pis.append(nlp)
             next_qs = self.target_critic(list(zip(next_obs, next_acs)))
 
+        _should_log = logger is not None and self.niter % self.log_every == 0
         critic_rets = self.critic(list(zip(obs, acs)), regularize=True,
-                                  logger=logger, niter=self.niter)
+                                  logger=logger if _should_log else None,
+                                  niter=self.niter)
 
         q_loss = 0
         for a_i, nq, log_pi, (pq, regs) in zip(
@@ -99,7 +104,7 @@ class AttentionSACContinuous:
         self.critic_optimizer.step()
         self.critic_optimizer.zero_grad()
 
-        if logger is not None:
+        if _should_log:
             logger.add_scalar("losses/q_loss", q_loss.item(), self.niter)
             logger.add_scalar("grad_norms/q", grad_norm, self.niter)
         self.niter += 1
@@ -137,7 +142,7 @@ class AttentionSACContinuous:
             self.agents[a_i].policy_optimizer.step()
             self.agents[a_i].policy_optimizer.zero_grad()
 
-            if logger is not None:
+            if logger is not None and self.niter % self.log_every == 0:
                 logger.add_scalar(f"agent{a_i}/losses/pol_loss", pol_loss.item(), self.niter)
                 logger.add_scalar(f"agent{a_i}/grad_norms/pi", grad_norm, self.niter)
                 logger.add_scalar(f"agent{a_i}/policy_entropy", -log_pi.mean().item(), self.niter)
